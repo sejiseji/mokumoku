@@ -162,12 +162,12 @@ def cloud_node_wobble(
     incubation_factor = max(0.0, min(1.0, node.incubation))
     cluster_amplitude = config.CLOUD_CLUSTER_WOBBLE_OFFSET_PX * fade
     local_amplitude = config.CLOUD_LOCAL_WOBBLE_OFFSET_PX * fade * activation
-    local_amplitude *= 1.0 - incubation_factor * 0.75
+    local_amplitude *= 1.0 - incubation_factor * 0.9
 
-    cluster_x = math.sin(seconds * 1.35 + cluster_phase) * cluster_amplitude
-    cluster_y = math.cos(seconds * 1.05 + cluster_phase * 1.21) * cluster_amplitude * 0.7
-    local_x = math.sin(seconds * 2.4 + local_phase) * local_amplitude
-    local_y = math.cos(seconds * 1.9 + local_phase * 1.31) * local_amplitude * 0.75
+    cluster_x = math.sin(seconds * 0.55 + cluster_phase) * cluster_amplitude
+    cluster_y = math.cos(seconds * 0.42 + cluster_phase * 1.21) * cluster_amplitude * 0.7
+    local_x = math.sin(seconds * 0.9 + local_phase) * local_amplitude
+    local_y = math.cos(seconds * 0.72 + local_phase * 1.31) * local_amplitude * 0.75
     return cluster_x + local_x, cluster_y + local_y, 1.0
 
 

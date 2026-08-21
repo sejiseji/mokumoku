@@ -189,6 +189,19 @@ class AssetsRenderingWebTests(unittest.TestCase):
         ]
         self.assertTrue(any(abs(payload.offset_x) > 0.0 for payload in animated_payloads))
 
+    def test_cloud_wobble_does_not_jitter_between_adjacent_frames(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        node = simulation.state.nodes[result.node_id]
+
+        first = cloud_node_wobble(node, simulation.state, 30)
+        second = cloud_node_wobble(node, simulation.state, 31)
+        delta = ((second[0] - first[0]) ** 2 + (second[1] - first[1]) ** 2) ** 0.5
+
+        self.assertLess(delta, 0.02)
+
     def test_web_html_postprocess_disables_gamepad_and_touch_scrolling(self) -> None:
         html_path = PROJECT_ROOT / "docs" / "_postprocess_test.html"
         html_path.write_text(
