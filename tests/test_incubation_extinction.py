@@ -5,6 +5,7 @@ import unittest
 from src import config
 from src.camera.camera import build_camera_basis
 from src.cloud.graph import add_edge, create_node, recompute_clusters
+from src.cloud.incubation import build_adjacency, node_retention_score, retained_decay_ratio
 from src.cloud.simulation import CloudSimulation
 from src.enums import EdgeKind
 from src.math3d import Vec3
@@ -91,6 +92,40 @@ class IncubationExtinctionTests(unittest.TestCase):
 
         new_distance = first.position.distance_to(simulation.state.nodes[second_id].position)
         self.assertLess(new_distance, old_distance)
+
+    def test_retention_score_rewards_connected_grown_mature_nodes(self) -> None:
+        simulation, _, first_id = self.make_seeded_simulation()
+        self.add_chain_node(simulation, first_id, 18.0)
+        first = simulation.state.nodes[first_id]
+        first.mass = config.SEED_MASS + config.RETENTION_GROWN_MASS
+        first.incubation = 1.0
+        first.noise = 0.0
+        adjacency = build_adjacency(simulation.state)
+
+        retention = node_retention_score(first, adjacency[first_id], simulation.state)
+
+        self.assertGreater(retention, 0.45)
+        self.assertLess(retained_decay_ratio(retention), 1.0)
+
+    def test_retained_connected_node_decays_slower_than_isolated_node(self) -> None:
+        isolated, _, isolated_id = self.make_seeded_simulation()
+        connected, _, connected_id = self.make_seeded_simulation()
+        self.add_chain_node(connected, connected_id, 18.0)
+
+        for simulation, node_id in [(isolated, isolated_id), (connected, connected_id)]:
+            node = simulation.state.nodes[node_id]
+            node.mass = config.SEED_MASS + config.RETENTION_GROWN_MASS
+            node.untouched_time = config.NATURAL_MASS_DECAY_START_SECONDS + 1.0
+            node.incubation = 1.0
+            node.noise = 0.0
+
+        isolated.update(1.0)
+        connected.update(1.0)
+
+        self.assertGreater(
+            connected.state.nodes[connected_id].mass,
+            isolated.state.nodes[isolated_id].mass,
+        )
 
     def test_redundant_mature_nodes_merge_without_losing_structure(self) -> None:
         simulation, _, first_id = self.make_seeded_simulation()

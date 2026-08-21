@@ -7,6 +7,7 @@ from pathlib import Path
 from src import config
 from src.camera.camera import CameraController
 from src.camera.projection import camera_depth
+from src.cloud.incubation import build_adjacency, node_retention_score
 from src.cloud.rendering import (
     BridgePayload,
     EdgePayload,
@@ -366,6 +367,12 @@ class MokumokuApp:
             selected_text = f"{node.id} d={camera_depth(node.position, self.camera.basis()):.1f}"
         mature = sum(1 for node in self.cloud.state.nodes.values() if node.incubation > 0.0)
         pruning = sum(1 for node in self.cloud.state.nodes.values() if node.is_pruning)
+        adjacency = build_adjacency(self.cloud.state)
+        retentions = [
+            node_retention_score(node, adjacency.get(node.id, set()), self.cloud.state)
+            for node in self.cloud.state.live_nodes()
+        ]
+        average_retention = sum(retentions) / len(retentions) if retentions else 0.0
         counts = (
             f"nodes {len(self.cloud.state.nodes)} "
             f"edges {len(self.cloud.state.edges)} "
@@ -374,6 +381,7 @@ class MokumokuApp:
         pyxel.text(8, 50, counts, config.COLOR_UI)
         pyxel.text(8, 60, f"selected {selected_text}", config.COLOR_UI)
         pyxel.text(8, 70, f"mature {mature} pruning {pruning}", config.COLOR_UI)
+        pyxel.text(8, 80, f"retain {average_retention:.2f}", config.COLOR_UI)
 
 
 def run(seed: int = 12345, headless: bool = False, smoke_frames: int | None = None) -> None:
