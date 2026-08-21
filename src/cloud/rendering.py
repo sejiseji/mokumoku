@@ -161,46 +161,8 @@ def cloud_node_wobble(
     frame: int = 0,
 ) -> tuple[float, float, float]:
     if isinstance(state, int):
-        frame = state
         state = None
-    cluster_seed = node.cluster_id * 977
-    if state is not None:
-        cluster_seed += len(state.nodes)
-    cluster_phase = (cluster_seed % 6283) / 1000.0
-    local_phase = (node.sprite_seed % 6283) / 1000.0
-    seconds = frame / config.FPS
-    fade = max(0.0, min(1.0, node.fade))
-    activation = 0.35 + node.activation * 0.65
-    incubation_factor = max(0.0, min(1.0, node.incubation))
-    calm_factor = 1.0 - incubation_factor * 0.8
-    cluster_amplitude = config.CLOUD_CLUSTER_WOBBLE_OFFSET_PX * fade * calm_factor
-    local_amplitude = config.CLOUD_LOCAL_WOBBLE_OFFSET_PX * fade * activation
-    local_amplitude *= calm_factor
-
-    cluster_x = (
-        math.sin(seconds * math.tau / config.CLOUD_CLUSTER_WOBBLE_PERIOD_X + cluster_phase)
-        * cluster_amplitude
-    )
-    cluster_y = (
-        math.cos(
-            seconds * math.tau / config.CLOUD_CLUSTER_WOBBLE_PERIOD_Y
-            + cluster_phase * 1.21
-        )
-        * cluster_amplitude
-        * 0.7
-    )
-    local_x = (
-        math.sin(seconds * math.tau / config.CLOUD_LOCAL_WOBBLE_PERIOD_X + local_phase)
-        * local_amplitude
-    )
-    local_y = (
-        math.cos(
-            seconds * math.tau / config.CLOUD_LOCAL_WOBBLE_PERIOD_Y + local_phase * 1.31
-        )
-        * local_amplitude
-        * 0.75
-    )
-    return cluster_x + local_x, cluster_y + local_y, 1.0
+    return 0.0, 0.0, 1.0
 
 
 def node_edge_count(node_id: int, state: CloudState) -> int:

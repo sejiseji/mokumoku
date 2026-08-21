@@ -176,7 +176,7 @@ class AssetsRenderingWebTests(unittest.TestCase):
         self.assertGreater(rect.width, 0)
         self.assertGreater(rect.height, 0)
 
-    def test_cloud_wobble_changes_over_time(self) -> None:
+    def test_cloud_node_body_offsets_do_not_animate(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)
         result = simulation.tap_screen(160.0, 190.0, camera)
@@ -184,16 +184,23 @@ class AssetsRenderingWebTests(unittest.TestCase):
         node = simulation.state.nodes[result.node_id]
 
         early = cloud_node_wobble(node, simulation.state, 0)
-        later = cloud_node_wobble(node, simulation.state, 30)
+        later = cloud_node_wobble(node, simulation.state, 600)
 
-        self.assertNotEqual(early, later)
+        self.assertEqual(early, (0.0, 0.0, 1.0))
+        self.assertEqual(later, (0.0, 0.0, 1.0))
         animated_items = collect_cloud_render_items(simulation.state, camera, frame=30)
         animated_payloads = [
             item.payload for item in animated_items if isinstance(item.payload, NodePayload)
         ]
-        self.assertTrue(any(abs(payload.offset_x) > 0.0 for payload in animated_payloads))
+        self.assertTrue(animated_payloads)
+        self.assertTrue(
+            all(
+                payload.offset_x == 0.0 and payload.offset_y == 0.0
+                for payload in animated_payloads
+            )
+        )
 
-    def test_cloud_wobble_does_not_jitter_between_adjacent_frames(self) -> None:
+    def test_cloud_node_body_offsets_do_not_jitter_between_adjacent_frames(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)
         result = simulation.tap_screen(160.0, 190.0, camera)
@@ -202,9 +209,8 @@ class AssetsRenderingWebTests(unittest.TestCase):
 
         first = cloud_node_wobble(node, simulation.state, 30)
         second = cloud_node_wobble(node, simulation.state, 31)
-        delta = ((second[0] - first[0]) ** 2 + (second[1] - first[1]) ** 2) ** 0.5
 
-        self.assertLess(delta, 0.006)
+        self.assertEqual(first, second)
 
     def test_small_single_cloud_uses_slow_mesh_overlay(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
@@ -223,7 +229,7 @@ class AssetsRenderingWebTests(unittest.TestCase):
         phase_b = single_node_mesh_phase(node, 31)
 
         self.assertGreater(intensity, 0.0)
-        self.assertLess(phase_b - phase_a, 0.008)
+        self.assertLess(phase_b - phase_a, 0.0045)
         items = collect_cloud_render_items(simulation.state, camera, frame=30)
         node_payloads = [
             item.payload for item in items if isinstance(item.payload, NodePayload)
