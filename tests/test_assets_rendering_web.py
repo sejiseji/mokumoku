@@ -251,16 +251,21 @@ class AssetsRenderingWebTests(unittest.TestCase):
         html_path = PROJECT_ROOT / "docs" / "_postprocess_test.html"
         html_path.write_text(
             '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0">'
-            '</head><body><script>const options = {, gamepad: "enabled"};</script></body></html>',
+            "</head><body><script>"
+            'launchPyxel({ command: "play", name: "mokumoku.pyxapp", base64: "abc" });'
+            'const options = {, gamepad: "enabled"};'
+            "</script></body></html>",
             encoding="utf-8",
         )
         try:
-            disable_virtual_gamepad(html_path)
+            disable_virtual_gamepad(html_path, "abc123def456")
             text = html_path.read_text(encoding="utf-8")
             self.assertNotIn("gamepad", text)
             self.assertIn("touch-action:none", text)
             self.assertIn("viewport-fit=cover", text)
             self.assertIn("user-scalable=no", text)
+            self.assertIn('name: "mokumoku-abc123def456.pyxapp"', text)
+            self.assertIn('name="mokumoku-build" content="abc123def456"', text)
         finally:
             html_path.unlink(missing_ok=True)
 

@@ -60,7 +60,12 @@ python3 scripts/generate_mokumoku_resource.py
 python3 scripts/build_web.py
 ```
 
-成果物は `docs/index.html` に出力します。GitHub Pages では `docs/` を公開対象にします。
+成果物は `docs/index.html` と `docs/builds/<build_id>/index.html` に出力します。
+GitHub Pages では `docs/` を公開対象にします。
+
+`build_id` は `.pyxapp` の内容から作る12桁のハッシュです。実機確認では
+`https://sejiseji.github.io/mokumoku/builds/<build_id>/` を使うと、クエリ文字列だけでなく
+HTMLのパスとPyxel起動名も変わるため、Safariのキャッシュに左右されにくくなります。
 
 確認だけなら Pyxel CLI なしで dry-run できます。
 
