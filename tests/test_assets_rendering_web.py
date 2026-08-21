@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pyxel
 from scripts.build_web import disable_virtual_gamepad, prune_versioned_builds
+from src import config
 from src.assets.sprite_map import CloudSpriteFamily, cloud_sprite_rect, size_class_for_screen_radius
 from src.camera.camera import build_camera_basis
 from src.camera.projection import project_point
@@ -94,6 +95,53 @@ class AssetsRenderingWebTests(unittest.TestCase):
         self.assertTrue(any(isinstance(item.payload, EdgePayload) for item in items))
         self.assertTrue(any(isinstance(item.payload, BridgePayload) for item in items))
         self.assertTrue(any(isinstance(item.payload, NodePayload) for item in items))
+
+    def test_bridge_rendering_fills_gap_then_thins_under_strain(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        parent = simulation.state.nodes[result.node_id]
+        child = create_node(
+            simulation.state,
+            parent.lineage_id,
+            parent.cluster_id,
+            parent.position + Vec3(64.0, 0.0, 0.0),
+            simulation.rng,
+            parent_node_id=parent.id,
+            generation=1,
+        )
+        edge = add_edge(
+            simulation.state,
+            parent.lineage_id,
+            parent.cluster_id,
+            parent.id,
+            child.id,
+            EdgeKind.PRIMARY,
+        )
+        self.assertIsNotNone(edge)
+        recompute_clusters(simulation.state, parent.lineage_id)
+
+        filled_items = collect_cloud_render_items(simulation.state, camera)
+        filled_bridges = [
+            item.payload for item in filled_items if isinstance(item.payload, BridgePayload)
+        ]
+        self.assertGreaterEqual(len(filled_bridges), 2)
+
+        edge.strain = config.CLOUD_BRIDGE_MAX_STRAIN - 0.01
+        strained_items = collect_cloud_render_items(simulation.state, camera)
+        strained_bridges = [
+            item.payload for item in strained_items if isinstance(item.payload, BridgePayload)
+        ]
+        self.assertLess(len(strained_bridges), len(filled_bridges))
+        self.assertGreaterEqual(len(strained_bridges), 1)
+
+        edge.strain = config.CLOUD_BRIDGE_MAX_STRAIN
+        broken_items = collect_cloud_render_items(simulation.state, camera)
+        broken_bridges = [
+            item.payload for item in broken_items if isinstance(item.payload, BridgePayload)
+        ]
+        self.assertEqual(len(broken_bridges), 0)
 
     def test_sprite_family_uses_projected_role_and_attribute_states(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))

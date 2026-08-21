@@ -61,7 +61,7 @@ def collect_cloud_render_items(
         projection_a = project_point(node_a.position, camera)
         projection_b = project_point(node_b.position, camera)
         if projection_a.visible and projection_b.visible:
-            bridge = cloud_bridge_payload(
+            bridges = cloud_bridge_payloads(
                 edge,
                 node_a,
                 node_b,
@@ -77,12 +77,12 @@ def collect_cloud_render_items(
                     payload=EdgePayload(edge, projection_a, projection_b),
                 )
             )
-            if bridge is not None:
+            for bridge_index, bridge in enumerate(bridges):
                 items.append(
                     RenderItem(
                         depth=bridge.point.depth,
                         layer_bias=1,
-                        stable_id=edge.id,
+                        stable_id=edge.id * 10 + bridge_index,
                         payload=bridge,
                     )
                 )
@@ -120,16 +120,16 @@ def collect_cloud_render_items(
     return items
 
 
-def cloud_bridge_payload(
+def cloud_bridge_payloads(
     edge: CloudEdge,
     node_a: CloudNode,
     node_b: CloudNode,
     projection_a: ProjectedPoint,
     projection_b: ProjectedPoint,
     camera: CameraBasis,
-) -> BridgePayload | None:
+) -> list[BridgePayload]:
     if edge.strain >= config.CLOUD_BRIDGE_MAX_STRAIN:
-        return None
+        return []
 
     distance = (
         (projection_b.screen_x - projection_a.screen_x) ** 2
@@ -137,22 +137,40 @@ def cloud_bridge_payload(
     ) ** 0.5
     radius_a = node_a.radius * projection_a.scale
     radius_b = node_b.radius * projection_b.scale
-    if distance <= (radius_a + radius_b) * 0.55:
-        return None
-
-    midpoint = node_a.position.lerp(node_b.position, 0.5)
-    projection = project_point(midpoint, camera)
-    if not projection.visible:
-        return None
+    radius_sum = radius_a + radius_b
+    if distance <= radius_sum * config.CLOUD_BRIDGE_OVERLAP_HIDE_RATIO:
+        return []
 
     strain_span = max(0.001, config.CLOUD_BRIDGE_MAX_STRAIN - config.CLOUD_BRIDGE_MIN_STRAIN)
     strain_t = max(0.0, min(1.0, (edge.strain - config.CLOUD_BRIDGE_MIN_STRAIN) / strain_span))
-    bridge_radius = min(radius_a, radius_b) * (0.72 - strain_t * 0.34)
-    sprite = cloud_sprite_rect(
-        CloudSpriteFamily.INTERNAL,
-        size_class_for_screen_radius(bridge_radius),
-    )
-    return BridgePayload(edge, projection, sprite)
+    distance_ratio = distance / max(1.0, radius_sum)
+    bridge_count = 1
+    if strain_t < 0.45 and distance_ratio >= config.CLOUD_BRIDGE_TRIPLE_RATIO:
+        bridge_count = 3
+    elif strain_t < 0.70 and distance_ratio >= config.CLOUD_BRIDGE_DOUBLE_RATIO:
+        bridge_count = 2
+
+    if bridge_count == 1:
+        offsets = (0.5,)
+    elif bridge_count == 2:
+        offsets = (0.42, 0.58)
+    else:
+        offsets = (0.34, 0.5, 0.66)
+
+    base_radius = min(radius_a, radius_b) * (0.72 - strain_t * 0.34)
+    payloads: list[BridgePayload] = []
+    for offset in offsets:
+        point = node_a.position.lerp(node_b.position, offset)
+        projection = project_point(point, camera)
+        if not projection.visible:
+            continue
+        center_factor = 1.0 - abs(offset - 0.5) * 0.22
+        sprite = cloud_sprite_rect(
+            CloudSpriteFamily.INTERNAL,
+            size_class_for_screen_radius(base_radius * center_factor),
+        )
+        payloads.append(BridgePayload(edge, projection, sprite))
+    return payloads
 
 
 def cloud_node_wobble(
