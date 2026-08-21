@@ -46,8 +46,8 @@ class CloudNode:
 
     @property
     def radius(self) -> float:
-        raw = 3.8 * math.sqrt(self.mass / max(self.density, 0.001))
-        return max(5.0, min(24.0, raw))
+        raw = config.RADIUS_SCALE * math.sqrt(self.mass / max(self.density, 0.001))
+        return max(config.MIN_NODE_RADIUS, min(config.MAX_NODE_RADIUS, raw))
 
 
 @dataclass

@@ -35,10 +35,22 @@ class AssetsRenderingWebTests(unittest.TestCase):
         self.assertNotEqual(pyxel.images[rect.image].pget(rect.u + 8, rect.v + 8), 0)
 
     def test_size_class_uses_discrete_sprite_sizes(self) -> None:
-        self.assertEqual(size_class_for_screen_radius(7.0), "s")
+        self.assertEqual(size_class_for_screen_radius(9.0), "s")
         self.assertEqual(size_class_for_screen_radius(12.0), "m")
         self.assertEqual(size_class_for_screen_radius(17.0), "l")
         self.assertEqual(size_class_for_screen_radius(22.0), "xl")
+
+    def test_initial_seed_uses_small_sprite(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        node = simulation.state.nodes[result.node_id]
+        projection = project_point(node.position, camera)
+
+        size_class = size_class_for_screen_radius(node.radius * projection.scale)
+
+        self.assertEqual(size_class, "s")
 
     def test_cloud_render_items_are_sorted_back_to_front(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))

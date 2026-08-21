@@ -51,10 +51,10 @@ def cloud_sprite_rect(family: CloudSpriteFamily, size_class: str) -> SpriteRect:
 
 
 def size_class_for_screen_radius(radius: float) -> str:
-    if radius < 8.0:
+    if radius < 10.0:
         return "s"
-    if radius < 13.0:
+    if radius < 15.0:
         return "m"
-    if radius < 18.0:
+    if radius < 20.0:
         return "l"
     return "xl"
