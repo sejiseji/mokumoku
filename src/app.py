@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from src.cloud.rendering import (
     collect_cloud_render_items,
 )
 from src.cloud.simulation import CloudSimulation
+from src.motion.atlas import WeatherMotionAtlas
 from src.rng import RandomSource
 
 
@@ -93,6 +95,9 @@ class MokumokuApp:
         self.rng = RandomSource(seed)
         self.camera = CameraController()
         self.cloud = CloudSimulation(self.rng)
+        atlas_start = time.perf_counter()
+        self.motion_atlas = WeatherMotionAtlas.build(seed=seed)
+        self.motion_atlas_build_ms = (time.perf_counter() - atlas_start) * 1000.0
         self.pointer: ActivePointer | None = None
         self.previous_selected_id: int | None = None
         self.debug_enabled = False
@@ -277,7 +282,12 @@ class MokumokuApp:
 
     def draw_cloud(self) -> None:
         camera = self.camera.basis()
-        for item in collect_cloud_render_items(self.cloud.state, camera, self.state.frame):
+        for item in collect_cloud_render_items(
+            self.cloud.state,
+            camera,
+            self.state.frame,
+            self.motion_atlas,
+        ):
             if isinstance(item.payload, EdgePayload):
                 if self.debug_enabled:
                     self.draw_edge_payload(item.payload)
@@ -353,16 +363,16 @@ class MokumokuApp:
         cy = y + sprite.height // 2
         radius = max(4, int(sprite.width * 0.42))
         color = 6 if intensity > 0.45 else 5
-        drift = math.sin(phase) * radius * 0.16
+        drift = cyclic_wave(phase) * radius * 0.16
 
         for band in (-0.34, 0.12, 0.45):
             band_y = int(cy + band * radius + drift * (0.5 + abs(band)))
             half = int(radius * (1.0 - abs(band) * 0.42))
-            middle_y = int(band_y + math.sin(phase + band * 2.7) * 0.9)
+            middle_y = int(band_y + cyclic_wave(phase + band * 2.7) * 0.9)
             pyxel.line(cx - half, band_y, cx, middle_y, color)
             pyxel.line(cx, middle_y, cx + half, band_y, color)
 
-        diagonal_shift = int(math.cos(phase * 0.7) * radius * 0.14)
+        diagonal_shift = int(cyclic_wave(phase * 0.7 + math.tau * 0.25) * radius * 0.14)
         pyxel.line(
             cx - radius + 2,
             cy - radius // 2 + diagonal_shift,
@@ -415,3 +425,12 @@ class MokumokuApp:
 
 def run(seed: int = 12345, headless: bool = False, smoke_frames: int | None = None) -> None:
     MokumokuApp(seed=seed, headless=headless, smoke_frames=smoke_frames)
+
+
+def cyclic_wave(phase: float) -> float:
+    unit = (phase / math.tau) % 1.0
+    if unit < 0.25:
+        return unit * 4.0
+    if unit < 0.75:
+        return 2.0 - unit * 4.0
+    return unit * 4.0 - 4.0

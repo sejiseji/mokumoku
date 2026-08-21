@@ -25,6 +25,7 @@ from src.cloud.rendering import (
 from src.cloud.simulation import CloudSimulation
 from src.enums import EdgeKind
 from src.math3d import Vec3
+from src.motion.atlas import WeatherMotionAtlas
 from src.rng import RandomSource
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -287,17 +288,42 @@ class AssetsRenderingWebTests(unittest.TestCase):
             )
         )
 
-    def test_cloud_node_body_offsets_do_not_jitter_between_adjacent_frames(self) -> None:
+    def test_motion_atlas_node_offsets_are_visible_but_not_adjacent_frame_jitter(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=12345)
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)
         result = simulation.tap_screen(160.0, 190.0, camera)
         self.assertIsNotNone(result.node_id)
-        node = simulation.state.nodes[result.node_id]
+        first_items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=30,
+            motion_atlas=atlas,
+        )
+        second_items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=31,
+            motion_atlas=atlas,
+        )
+        later_items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=240,
+            motion_atlas=atlas,
+        )
+        first = next(item.payload for item in first_items if isinstance(item.payload, NodePayload))
+        second = next(
+            item.payload for item in second_items if isinstance(item.payload, NodePayload)
+        )
+        later = next(item.payload for item in later_items if isinstance(item.payload, NodePayload))
 
-        first = cloud_node_wobble(node, simulation.state, 30)
-        second = cloud_node_wobble(node, simulation.state, 31)
-
-        self.assertEqual(first, second)
+        self.assertLessEqual(abs(second.offset_x - first.offset_x), 1.0)
+        self.assertLessEqual(abs(second.offset_y - first.offset_y), 1.0)
+        self.assertNotEqual(
+            (round(first.offset_x, 2), round(first.offset_y, 2)),
+            (round(later.offset_x, 2), round(later.offset_y, 2)),
+        )
 
     def test_small_single_cloud_uses_slow_mesh_overlay(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))

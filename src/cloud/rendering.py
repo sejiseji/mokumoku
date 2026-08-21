@@ -14,6 +14,8 @@ from src.camera.camera import CameraBasis
 from src.camera.projection import ProjectedPoint, project_point
 from src.cloud.model import CloudEdge, CloudNode, CloudState
 from src.enums import EdgeKind
+from src.motion.atlas import WeatherMotionAtlas
+from src.motion.cloud_motion import cloud_render_offset
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,7 @@ def collect_cloud_render_items(
     state: CloudState,
     camera: CameraBasis,
     frame: int = 0,
+    motion_atlas: WeatherMotionAtlas | None = None,
 ) -> list[RenderItem]:
     items: list[RenderItem] = []
     for edge in state.live_edges():
@@ -91,7 +94,15 @@ def collect_cloud_render_items(
         projection = project_point(node.position, camera)
         if not projection.visible:
             continue
-        offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
+        if motion_atlas is None:
+            offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
+        else:
+            offset_x, offset_y, _radius_ratio = cloud_render_offset(
+                node,
+                state,
+                motion_atlas,
+                frame,
+            )
         screen_radius = node.radius * projection.scale
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
         mesh_phase = single_node_mesh_phase(node, frame)
