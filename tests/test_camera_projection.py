@@ -4,7 +4,11 @@ import unittest
 
 from src import config
 from src.camera.camera import CameraController, CameraPreset, build_camera_basis
-from src.camera.interaction_plane import depth_locked_drag_target, screen_to_world_at_depth
+from src.camera.interaction_plane import (
+    depth_locked_drag_target,
+    screen_to_world_at_depth,
+    screen_to_world_in_cloud_bounds,
+)
 from src.camera.projection import camera_depth, project_point
 from src.math3d import Vec3
 
@@ -59,6 +63,19 @@ class CameraProjectionTests(unittest.TestCase):
         )
 
         self.assertLess(restored.distance_to(point), 1e-9)
+
+    def test_screen_to_world_in_cloud_bounds_preserves_screen_position(self) -> None:
+        camera = build_camera_basis(config.CAMERA_FRONT_YAW)
+
+        point = screen_to_world_in_cloud_bounds(300.0, 80.0, config.CAMERA_DISTANCE, camera)
+        projection = project_point(point, camera)
+
+        self.assertGreaterEqual(point.y, config.MIN_CLOUD_Y)
+        self.assertLessEqual(point.y, config.MAX_CLOUD_Y)
+        self.assertGreaterEqual(point.z, config.CLOUD_DEPTH_MIN)
+        self.assertLessEqual(point.z, config.CLOUD_DEPTH_MAX)
+        self.assertAlmostEqual(projection.screen_x, 300.0, delta=1.0)
+        self.assertAlmostEqual(projection.screen_y, 80.0, delta=1.0)
 
     def test_depth_locked_drag_does_not_move_along_camera_forward(self) -> None:
         for yaw in [config.CAMERA_LEFT_YAW, config.CAMERA_FRONT_YAW, config.CAMERA_RIGHT_YAW]:

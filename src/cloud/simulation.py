@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 from src import config
 from src.camera.camera import CameraBasis
-from src.camera.interaction_plane import depth_locked_drag_target, screen_to_world_at_depth
+from src.camera.interaction_plane import (
+    clamp_cloud_position,
+    depth_locked_drag_target,
+    screen_to_world_in_cloud_bounds,
+)
 from src.camera.projection import project_point
 from src.cloud.graph import (
     add_edge,
@@ -83,16 +87,11 @@ class CloudSimulation:
             extinct=False,
             total_origin_evidence=OriginEvidence(),
         )
-        position = screen_to_world_at_depth(
+        position = screen_to_world_in_cloud_bounds(
             screen_x,
             screen_y,
             config.CAMERA_DISTANCE,
             camera,
-        )
-        position = Vec3(
-            position.x,
-            min(max(position.y, config.MIN_CLOUD_Y), config.MAX_CLOUD_Y),
-            min(max(position.z, config.CLOUD_DEPTH_MIN), config.CLOUD_DEPTH_MAX),
         )
         node = create_node(self.state, lineage_id, cluster_id, position, self.rng)
         recompute_clusters(self.state, lineage_id)
@@ -105,11 +104,21 @@ class CloudSimulation:
         if node is None:
             if self.state.active_lineage() is None:
                 return self.create_seed_at_screen(screen_x, screen_y, camera)
-            nearest = self.nearest_projected_node(screen_x, screen_y, camera, max_distance=42.0)
+            nearest = self.nearest_projected_node(screen_x, screen_y, camera)
             if nearest is None:
                 return CloudOperationResult("ripple")
-            node = nearest
-            child = self.add_child_near_screen(node, screen_x, screen_y, camera)
+            nearest_projection = project_point(nearest.position, camera)
+            screen_distance = (
+                (nearest_projection.screen_x - screen_x) ** 2
+                + (nearest_projection.screen_y - screen_y) ** 2
+            ) ** 0.5
+            child = self.add_child_near_screen(
+                nearest,
+                screen_x,
+                screen_y,
+                camera,
+                connect=screen_distance <= config.TAP_ATTACH_DISTANCE,
+            )
             if child is None:
                 return CloudOperationResult("node_limit")
             self.touch_neighborhood(child.id)
@@ -162,41 +171,40 @@ class CloudSimulation:
         screen_x: float,
         screen_y: float,
         camera: CameraBasis,
+        connect: bool = True,
     ) -> CloudNode | None:
         if not self.state.can_add_node():
             return None
         projection = project_point(parent.position, camera)
         if not projection.visible:
             return None
-        position = screen_to_world_at_depth(screen_x, screen_y, projection.depth, camera)
+        position = screen_to_world_in_cloud_bounds(screen_x, screen_y, projection.depth, camera)
         depth_offset = self.rng.uniform(
             -config.CHILD_DEPTH_OFFSET_MAX,
             config.CHILD_DEPTH_OFFSET_MAX,
         )
-        position = position + camera.right * self.rng.uniform(-2.0, 2.0)
-        position = position + Vec3(0.0, 0.0, depth_offset)
-        position = Vec3(
-            position.x,
-            min(max(position.y, config.MIN_CLOUD_Y), config.MAX_CLOUD_Y),
-            min(max(position.z, config.CLOUD_DEPTH_MIN), config.CLOUD_DEPTH_MAX),
-        )
+        if connect:
+            position = position + camera.right * self.rng.uniform(-2.0, 2.0)
+            position = position + Vec3(0.0, 0.0, depth_offset)
+            position = clamp_cloud_position(position)
         child = create_node(
             self.state,
             parent.lineage_id,
             parent.cluster_id,
             position,
             self.rng,
-            parent_node_id=parent.id,
+            parent_node_id=parent.id if connect else None,
             generation=parent.generation + 1,
         )
-        add_edge(
-            self.state,
-            parent.lineage_id,
-            parent.cluster_id,
-            parent.id,
-            child.id,
-            EdgeKind.PRIMARY,
-        )
+        if connect:
+            add_edge(
+                self.state,
+                parent.lineage_id,
+                parent.cluster_id,
+                parent.id,
+                child.id,
+                EdgeKind.PRIMARY,
+            )
         recompute_clusters(self.state, parent.lineage_id)
         return child
 
@@ -223,7 +231,7 @@ class CloudSimulation:
         screen_x: float,
         screen_y: float,
         camera: CameraBasis,
-        max_distance: float,
+        max_distance: float | None = None,
     ) -> CloudNode | None:
         best: tuple[float, int] | None = None
         for node in self.state.nodes.values():
@@ -233,7 +241,9 @@ class CloudSimulation:
             dx = projection.screen_x - screen_x
             dy = projection.screen_y - screen_y
             distance = (dx * dx + dy * dy) ** 0.5
-            if distance <= max_distance and (best is None or distance < best[0]):
+            if max_distance is not None and distance > max_distance:
+                continue
+            if best is None or distance < best[0]:
                 best = (distance, node.id)
         return None if best is None else self.state.nodes[best[1]]
 

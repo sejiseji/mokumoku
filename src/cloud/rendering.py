@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
+from src import config
 from src.assets.sprite_map import (
     CloudSpriteFamily,
     SpriteRect,
@@ -26,6 +28,8 @@ class NodePayload:
     node: CloudNode
     projection: ProjectedPoint
     sprite: SpriteRect
+    offset_x: float = 0.0
+    offset_y: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -36,7 +40,11 @@ class RenderItem:
     payload: EdgePayload | NodePayload
 
 
-def collect_cloud_render_items(state: CloudState, camera: CameraBasis) -> list[RenderItem]:
+def collect_cloud_render_items(
+    state: CloudState,
+    camera: CameraBasis,
+    frame: int = 0,
+) -> list[RenderItem]:
     items: list[RenderItem] = []
     for edge in state.live_edges():
         node_a = state.nodes[edge.node_a]
@@ -57,7 +65,8 @@ def collect_cloud_render_items(state: CloudState, camera: CameraBasis) -> list[R
         projection = project_point(node.position, camera)
         if not projection.visible:
             continue
-        screen_radius = node.radius * projection.scale
+        offset_x, offset_y, radius_ratio = cloud_node_wobble(node, frame)
+        screen_radius = node.radius * projection.scale * radius_ratio
         sprite = cloud_sprite_rect(
             choose_cloud_sprite_family(node, state),
             size_class_for_screen_radius(screen_radius * max(0.45, node.fade)),
@@ -67,12 +76,29 @@ def collect_cloud_render_items(state: CloudState, camera: CameraBasis) -> list[R
                 depth=projection.depth,
                 layer_bias=1,
                 stable_id=node.id,
-                payload=NodePayload(node, projection, sprite),
+                payload=NodePayload(node, projection, sprite, offset_x, offset_y),
             )
         )
 
     items.sort(key=lambda item: (-item.depth, item.layer_bias, item.stable_id))
     return items
+
+
+def cloud_node_wobble(node: CloudNode, frame: int) -> tuple[float, float, float]:
+    phase = (node.sprite_seed % 6283) / 1000.0
+    seconds = frame / config.FPS
+    fade = max(0.0, min(1.0, node.fade))
+    activation = 0.35 + node.activation * 0.65
+    amplitude = config.CLOUD_WOBBLE_OFFSET_PX * fade * activation
+    offset_x = math.sin(seconds * 2.1 + phase) * amplitude
+    offset_y = math.cos(seconds * 1.7 + phase * 1.31) * amplitude * 0.75
+    radius_ratio = (
+        1.0
+        + math.sin(seconds * 2.8 + phase * 0.73)
+        * config.CLOUD_WOBBLE_RADIUS_RATIO
+        * fade
+    )
+    return offset_x, offset_y, radius_ratio
 
 
 def choose_cloud_sprite_family(node: CloudNode, state: CloudState) -> CloudSpriteFamily:

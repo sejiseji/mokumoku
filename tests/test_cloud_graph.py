@@ -32,14 +32,19 @@ class CloudGraphTests(unittest.TestCase):
         self.assertEqual(simulation.state.nodes[node_id].lineage_id, lineage.id)
         self.assertEqual(len(lineage.active_cluster_ids), 1)
 
-    def test_blank_tap_does_not_create_second_lineage(self) -> None:
+    def test_blank_tap_adds_detached_seed_without_second_lineage(self) -> None:
         simulation, camera, _ = self.seed_cloud()
 
         result = simulation.tap_screen(300.0, 80.0, camera)
 
-        self.assertEqual(result.kind, "ripple")
+        self.assertEqual(result.kind, "child")
+        self.assertIsNotNone(result.node_id)
         self.assertEqual(len(simulation.state.lineages), 1)
-        self.assertEqual(len(simulation.state.nodes), 1)
+        self.assertEqual(len(simulation.state.nodes), 2)
+        self.assertEqual(len(simulation.state.edges), 0)
+        projection = project_point(simulation.state.nodes[result.node_id].position, camera)
+        self.assertAlmostEqual(projection.screen_x, 300.0, delta=1.0)
+        self.assertAlmostEqual(projection.screen_y, 80.0, delta=1.0)
 
     def test_tap_on_node_grows_local_node(self) -> None:
         simulation, camera, node_id = self.seed_cloud()

@@ -213,7 +213,7 @@ class MokumokuApp:
 
     def draw_cloud(self) -> None:
         camera = self.camera.basis()
-        for item in collect_cloud_render_items(self.cloud.state, camera):
+        for item in collect_cloud_render_items(self.cloud.state, camera, self.state.frame):
             if isinstance(item.payload, EdgePayload):
                 self.draw_edge_payload(item.payload)
             elif isinstance(item.payload, NodePayload):
@@ -235,8 +235,8 @@ class MokumokuApp:
         node = payload.node
         projection = payload.projection
         sprite = payload.sprite
-        x = int(projection.screen_x - sprite.width / 2)
-        y = int(projection.screen_y - sprite.height / 2)
+        x = int(projection.screen_x + payload.offset_x - sprite.width / 2)
+        y = int(projection.screen_y + payload.offset_y - sprite.height / 2)
 
         if self.assets_loaded:
             pyxel.blt(

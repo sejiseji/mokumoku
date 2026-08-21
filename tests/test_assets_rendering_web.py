@@ -13,6 +13,7 @@ from src.cloud.rendering import (
     EdgePayload,
     NodePayload,
     choose_cloud_sprite_family,
+    cloud_node_wobble,
     collect_cloud_render_items,
 )
 from src.cloud.simulation import CloudSimulation
@@ -124,6 +125,23 @@ class AssetsRenderingWebTests(unittest.TestCase):
 
         self.assertGreater(rect.width, 0)
         self.assertGreater(rect.height, 0)
+
+    def test_cloud_wobble_changes_over_time(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        node = simulation.state.nodes[result.node_id]
+
+        early = cloud_node_wobble(node, 0)
+        later = cloud_node_wobble(node, 30)
+
+        self.assertNotEqual(early, later)
+        animated_items = collect_cloud_render_items(simulation.state, camera, frame=30)
+        animated_payloads = [
+            item.payload for item in animated_items if isinstance(item.payload, NodePayload)
+        ]
+        self.assertTrue(any(abs(payload.offset_x) > 0.0 for payload in animated_payloads))
 
     def test_web_html_postprocess_disables_gamepad_and_touch_scrolling(self) -> None:
         html_path = PROJECT_ROOT / "docs" / "_postprocess_test.html"

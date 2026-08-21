@@ -16,46 +16,50 @@ def draw_blob(image, x: int, y: int, size: int, family) -> None:
 
     cx = x + size // 2
     cy = y + size // 2
-    rx = max(3, size // 2 - 2)
-    ry = max(3, int(rx * 0.68))
+    r = max(3, size // 4)
+
+    def puff(px: int, py: int, radius: int, color: int) -> None:
+        image.circ(cx + px, cy + py, max(1, radius), color)
+
+    def lumpy(base: int, light: int = 7, accent: int = 8, stretch: int = 0) -> None:
+        puff(-r - 1 - stretch, 1, r + 1, base)
+        puff(0, -r // 2, r + 2, base)
+        puff(r + stretch, 1, r + 1, base)
+        puff(-r // 2, r // 2 + 1, r + 1, base)
+        puff(r // 2 + stretch, r // 2 + 1, r, base)
+        puff(-r - 1 - stretch, 0, r, light)
+        puff(0, -r // 2 - 1, r + 1, light)
+        puff(r - 1 + stretch, 0, r, light)
+        puff(-r // 2, r // 2, r, light)
+        image.pset(cx - r // 2, cy - r // 2, accent)
 
     if family is CloudSpriteFamily.INTERNAL:
-        image.elli(cx - rx + 1, cy - ry, rx * 2 - 2, ry * 2, 6)
-        image.elli(cx - rx // 2, cy - ry - 2, rx, ry + 4, 7)
-        image.pset(cx - rx // 2, cy - ry // 2, 8)
+        lumpy(6, 7, 8)
     elif family is CloudSpriteFamily.EDGE:
-        image.elli(cx - rx + 1, cy - ry + 1, rx * 2 - 2, ry * 2, 5)
-        image.elli(cx - rx + 2, cy - ry, rx * 2 - 5, ry * 2 - 2, 7)
-        image.ellib(cx - rx + 1, cy - ry + 1, rx * 2 - 2, ry * 2, 6)
+        lumpy(5, 7, 6, stretch=1)
     elif family is CloudSpriteFamily.BOTTOM:
-        image.elli(cx - rx, cy - ry + 2, rx * 2, ry * 2, 5)
-        image.elli(cx - rx + 2, cy - ry, rx * 2 - 4, ry + 4, 7)
-        image.line(cx - rx + 3, cy + ry - 1, cx + rx - 3, cy + ry - 1, 4)
+        lumpy(5, 7, 4)
+        image.line(cx - r - 3, cy + r + 1, cx + r + 4, cy + r + 1, 4)
     elif family is CloudSpriteFamily.UPDRAFT:
-        image.elli(cx - rx + 2, cy - ry + 3, rx * 2 - 4, ry * 2 - 2, 6)
-        image.elli(cx - rx // 2, cy - ry - 3, rx, ry + 5, 8)
-        image.line(cx, cy + ry - 1, cx, cy - ry + 1, 8)
+        lumpy(6, 7, 8)
+        puff(0, -r - 3, max(2, r - 1), 8)
     elif family is CloudSpriteFamily.STRETCH:
-        image.elli(cx - rx, cy - ry // 2, rx * 2, ry, 6)
-        image.elli(cx - rx + 2, cy - ry // 2 - 1, rx * 2 - 4, ry - 1, 7)
-        image.pset(cx + rx - 4, cy, 8)
+        lumpy(6, 7, 8, stretch=2)
     elif family is CloudSpriteFamily.FRAGMENT:
-        image.elli(cx - rx + 4, cy - ry + 3, rx * 2 - 8, ry * 2 - 5, 5)
-        image.pset(cx - 2, cy - 2, 7)
-        image.pset(cx + 2, cy, 6)
-        image.pset(cx - 4, cy + 2, 6)
+        puff(-r // 2, -1, max(2, r - 1), 5)
+        puff(r // 2, 1, max(2, r - 2), 6)
+        puff(-1, -r // 2, max(2, r - 2), 7)
     elif family is CloudSpriteFamily.FADE:
-        image.elli(cx - rx + 4, cy - ry + 4, rx * 2 - 8, ry * 2 - 8, 6)
-        image.pset(cx - 3, cy - 1, 7)
-        image.pset(cx + 4, cy + 2, 5)
+        puff(-r // 2, 0, max(2, r - 1), 6)
+        puff(r // 2, 1, max(2, r - 2), 5)
+        image.pset(cx - 2, cy - 1, 7)
     elif family is CloudSpriteFamily.SERENDIPITY:
-        image.elli(cx - rx + 1, cy - ry, rx * 2 - 2, ry * 2, 7)
-        image.ellib(cx - rx + 2, cy - ry + 1, rx * 2 - 4, ry * 2 - 2, 8)
-        image.pset(cx, cy - ry + 2, 15)
+        lumpy(7, 8, 15)
     elif family is CloudSpriteFamily.CHARGE:
-        image.line(cx - 2, cy - ry + 2, cx + 2, cy - 1, 10)
+        lumpy(6, 7, 10)
+        image.line(cx - 2, cy - r - 1, cx + 2, cy - 1, 10)
         image.line(cx + 2, cy - 1, cx - 1, cy, 10)
-        image.line(cx - 1, cy, cx + 3, cy + ry - 3, 10)
+        image.line(cx - 1, cy, cx + 3, cy + r, 10)
 
 
 def generate_resource() -> Path:
