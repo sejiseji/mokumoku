@@ -160,14 +160,34 @@ def cloud_node_wobble(
     fade = max(0.0, min(1.0, node.fade))
     activation = 0.35 + node.activation * 0.65
     incubation_factor = max(0.0, min(1.0, node.incubation))
-    cluster_amplitude = config.CLOUD_CLUSTER_WOBBLE_OFFSET_PX * fade
+    calm_factor = 1.0 - incubation_factor * 0.8
+    cluster_amplitude = config.CLOUD_CLUSTER_WOBBLE_OFFSET_PX * fade * calm_factor
     local_amplitude = config.CLOUD_LOCAL_WOBBLE_OFFSET_PX * fade * activation
-    local_amplitude *= 1.0 - incubation_factor * 0.9
+    local_amplitude *= calm_factor
 
-    cluster_x = math.sin(seconds * 0.55 + cluster_phase) * cluster_amplitude
-    cluster_y = math.cos(seconds * 0.42 + cluster_phase * 1.21) * cluster_amplitude * 0.7
-    local_x = math.sin(seconds * 0.9 + local_phase) * local_amplitude
-    local_y = math.cos(seconds * 0.72 + local_phase * 1.31) * local_amplitude * 0.75
+    cluster_x = (
+        math.sin(seconds * math.tau / config.CLOUD_CLUSTER_WOBBLE_PERIOD_X + cluster_phase)
+        * cluster_amplitude
+    )
+    cluster_y = (
+        math.cos(
+            seconds * math.tau / config.CLOUD_CLUSTER_WOBBLE_PERIOD_Y
+            + cluster_phase * 1.21
+        )
+        * cluster_amplitude
+        * 0.7
+    )
+    local_x = (
+        math.sin(seconds * math.tau / config.CLOUD_LOCAL_WOBBLE_PERIOD_X + local_phase)
+        * local_amplitude
+    )
+    local_y = (
+        math.cos(
+            seconds * math.tau / config.CLOUD_LOCAL_WOBBLE_PERIOD_Y + local_phase * 1.31
+        )
+        * local_amplitude
+        * 0.75
+    )
     return cluster_x + local_x, cluster_y + local_y, 1.0
 
 

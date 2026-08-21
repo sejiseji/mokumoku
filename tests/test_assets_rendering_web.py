@@ -200,7 +200,7 @@ class AssetsRenderingWebTests(unittest.TestCase):
         second = cloud_node_wobble(node, simulation.state, 31)
         delta = ((second[0] - first[0]) ** 2 + (second[1] - first[1]) ** 2) ** 0.5
 
-        self.assertLess(delta, 0.02)
+        self.assertLess(delta, 0.006)
 
     def test_web_html_postprocess_disables_gamepad_and_touch_scrolling(self) -> None:
         html_path = PROJECT_ROOT / "docs" / "_postprocess_test.html"
