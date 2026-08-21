@@ -13,6 +13,7 @@ from src.motion.cloud_motion import (
     cloud_render_offset,
 )
 from src.motion.quantize import unpack_signed
+from src.motion.runtime import WeatherMotionRuntime, hysteresis_step
 from src.rng import RandomSource
 
 
@@ -26,15 +27,36 @@ class MotionAtlasTests(unittest.TestCase):
         self.assertEqual(len(atlas.cloud_active_dx), expected)
         self.assertEqual(len(atlas.cloud_settling_dx), expected)
         self.assertEqual(len(atlas.cloud_mature_dx), expected)
-        self.assertTrue(all(-2 <= unpack_signed(value) <= 2 for value in atlas.cloud_active_dx))
-        self.assertTrue(all(-2 <= unpack_signed(value) <= 2 for value in atlas.cloud_active_dy))
         self.assertTrue(
-            all(-1 <= unpack_signed(value) <= 1 for value in atlas.cloud_settling_dx)
+            all(-127 <= unpack_signed(value) <= 127 for value in atlas.cloud_active_dx)
         )
         self.assertTrue(
-            all(-1 <= unpack_signed(value) <= 1 for value in atlas.cloud_mature_dx)
+            all(-127 <= unpack_signed(value) <= 127 for value in atlas.cloud_settling_dx)
         )
         self.assertTrue(all(0 <= value <= 15 for value in atlas.cloud_active_pulse))
+
+    def test_cloud_motion_bank_is_low_passed_before_quantization(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=123)
+        values = [unpack_signed(value) for value in atlas.cloud_active_dx[: atlas.phase_count]]
+        adjacent_diffs = [
+            abs(values[(index + 1) % len(values)] - values[index])
+            for index in range(len(values))
+        ]
+
+        self.assertLessEqual(max(adjacent_diffs), 4)
+
+    def test_hysteresis_keeps_one_pixel_offsets_from_chattering(self) -> None:
+        current = 0
+        for raw in (40, 70, 90):
+            current = hysteresis_step(current, raw, 91, 48)
+            self.assertEqual(current, 0)
+
+        current = hysteresis_step(current, 100, 91, 48)
+        self.assertEqual(current, 1)
+        current = hysteresis_step(current, 60, 91, 48)
+        self.assertEqual(current, 1)
+        current = hysteresis_step(current, 40, 91, 48)
+        self.assertEqual(current, 0)
 
     def test_weather_motion_atlas_is_deterministic_by_seed(self) -> None:
         first = WeatherMotionAtlas.build(seed=777)
@@ -100,21 +122,28 @@ class MotionAtlasTests(unittest.TestCase):
         projection = project_point(node.position, camera)
         self.assertTrue(projection.visible)
 
-        early = cloud_render_offset(node, simulation.state, atlas, 0)
-        adjacent = cloud_render_offset(node, simulation.state, atlas, 1)
-        later = cloud_render_offset(node, simulation.state, atlas, 240)
+        runtime = WeatherMotionRuntime()
+        offsets = [
+            cloud_render_offset(node, simulation.state, atlas, frame, runtime)
+            for frame in range(int(config.CLOUD_MOTION_PERIOD_SECONDS * config.FPS))
+        ]
+        early = offsets[0]
+        adjacent = offsets[1]
+        unique_positions = {(round(offset[0], 2), round(offset[1], 2)) for offset in offsets}
 
-        self.assertLessEqual(abs(adjacent[0] - early[0]), 1.0)
-        self.assertLessEqual(abs(adjacent[1] - early[1]), 1.0)
-        self.assertNotEqual(
-            (round(early[0], 2), round(early[1], 2)),
-            (round(later[0], 2), round(later[1], 2)),
-        )
+        self.assertEqual(adjacent, early)
+        self.assertTrue(all(abs(offset[0]) <= 1.0 for offset in offsets))
+        self.assertTrue(all(abs(offset[1]) <= 1.0 for offset in offsets))
+        self.assertGreaterEqual(len(unique_positions), 2)
 
         node.incubation = 0.9
-        mature = cloud_render_offset(node, simulation.state, atlas, 240)
-        self.assertLessEqual(abs(mature[0]), abs(later[0]) + 0.01)
-        self.assertLessEqual(abs(mature[1]), abs(later[1]) + 0.01)
+        mature_runtime = WeatherMotionRuntime()
+        mature_offsets = [
+            cloud_render_offset(node, simulation.state, atlas, frame, mature_runtime)
+            for frame in range(0, int(config.CLOUD_MOTION_PERIOD_SECONDS * config.FPS), 30)
+        ]
+        self.assertTrue(all(abs(offset[0]) <= 1.0 for offset in mature_offsets))
+        self.assertTrue(all(abs(offset[1]) <= 1.0 for offset in mature_offsets))
 
 
 if __name__ == "__main__":

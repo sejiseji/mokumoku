@@ -16,6 +16,7 @@ from src.cloud.model import CloudEdge, CloudNode, CloudState
 from src.enums import EdgeKind
 from src.motion.atlas import WeatherMotionAtlas
 from src.motion.cloud_motion import cloud_render_offset
+from src.motion.runtime import WeatherMotionRuntime
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ def collect_cloud_render_items(
     camera: CameraBasis,
     frame: int = 0,
     motion_atlas: WeatherMotionAtlas | None = None,
+    motion_runtime: WeatherMotionRuntime | None = None,
 ) -> list[RenderItem]:
     items: list[RenderItem] = []
     for edge in state.live_edges():
@@ -102,6 +104,7 @@ def collect_cloud_render_items(
                 state,
                 motion_atlas,
                 frame,
+                motion_runtime,
             )
         screen_radius = node.radius * projection.scale
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)

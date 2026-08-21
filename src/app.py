@@ -17,6 +17,7 @@ from src.cloud.rendering import (
 )
 from src.cloud.simulation import CloudSimulation
 from src.motion.atlas import WeatherMotionAtlas
+from src.motion.runtime import WeatherMotionRuntime
 from src.rng import RandomSource
 
 
@@ -98,6 +99,7 @@ class MokumokuApp:
         atlas_start = time.perf_counter()
         self.motion_atlas = WeatherMotionAtlas.build(seed=seed)
         self.motion_atlas_build_ms = (time.perf_counter() - atlas_start) * 1000.0
+        self.motion_runtime = WeatherMotionRuntime()
         self.pointer: ActivePointer | None = None
         self.previous_selected_id: int | None = None
         self.debug_enabled = False
@@ -287,6 +289,7 @@ class MokumokuApp:
             camera,
             self.state.frame,
             self.motion_atlas,
+            self.motion_runtime,
         ):
             if isinstance(item.payload, EdgePayload):
                 if self.debug_enabled:

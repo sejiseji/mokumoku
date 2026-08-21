@@ -26,6 +26,7 @@ from src.cloud.simulation import CloudSimulation
 from src.enums import EdgeKind
 from src.math3d import Vec3
 from src.motion.atlas import WeatherMotionAtlas
+from src.motion.runtime import WeatherMotionRuntime
 from src.rng import RandomSource
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -294,23 +295,27 @@ class AssetsRenderingWebTests(unittest.TestCase):
         camera = build_camera_basis(0.0)
         result = simulation.tap_screen(160.0, 190.0, camera)
         self.assertIsNotNone(result.node_id)
+        runtime = WeatherMotionRuntime()
         first_items = collect_cloud_render_items(
             simulation.state,
             camera,
             frame=30,
             motion_atlas=atlas,
+            motion_runtime=runtime,
         )
         second_items = collect_cloud_render_items(
             simulation.state,
             camera,
             frame=31,
             motion_atlas=atlas,
+            motion_runtime=runtime,
         )
         later_items = collect_cloud_render_items(
             simulation.state,
             camera,
-            frame=240,
+            frame=int(config.CLOUD_MOTION_PERIOD_SECONDS * config.FPS * 0.5),
             motion_atlas=atlas,
+            motion_runtime=runtime,
         )
         first = next(item.payload for item in first_items if isinstance(item.payload, NodePayload))
         second = next(
@@ -318,8 +323,9 @@ class AssetsRenderingWebTests(unittest.TestCase):
         )
         later = next(item.payload for item in later_items if isinstance(item.payload, NodePayload))
 
-        self.assertLessEqual(abs(second.offset_x - first.offset_x), 1.0)
-        self.assertLessEqual(abs(second.offset_y - first.offset_y), 1.0)
+        self.assertEqual((second.offset_x, second.offset_y), (first.offset_x, first.offset_y))
+        self.assertLessEqual(abs(later.offset_x), 1.0)
+        self.assertLessEqual(abs(later.offset_y), 1.0)
         self.assertNotEqual(
             (round(first.offset_x, 2), round(first.offset_y, 2)),
             (round(later.offset_x, 2), round(later.offset_y, 2)),

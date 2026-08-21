@@ -148,19 +148,33 @@ def build_cloud_banks(
 
     for group in range(group_count):
         sample_index = seed * 131 + group * 17 + 23
+        raw_x_values: list[float] = []
+        raw_y_values: list[float] = []
+        pulse_values: list[float] = []
         for phase in range(phase_count):
             phase01 = phase / phase_count
             x, y, pulse = sample_weather_motion(sample_index, group, phase01)
-            active_dx.append(pack_signed(quantize_signed(x, 1.55, 2)))
-            active_dy.append(pack_signed(quantize_signed(y, 1.85, 2)))
+            raw_x_values.append(0.75 * x)
+            raw_y_values.append(0.62 * y)
+            pulse_values.append(pulse)
+
+        smooth_x = smooth_periodic(raw_x_values, config.CLOUD_MOTION_SMOOTH_RADIUS)
+        smooth_y = smooth_periodic(raw_y_values, config.CLOUD_MOTION_SMOOTH_RADIUS)
+        for phase in range(phase_count):
+            x = smooth_x[phase]
+            y = smooth_y[phase]
+            pulse = pulse_values[phase]
+
+            active_dx.append(pack_signed(quantize_signed(x, 112.0, 127)))
+            active_dy.append(pack_signed(quantize_signed(y, 112.0, 127)))
             active_pulse.append(quantize_pulse(pulse))
 
-            settling_dx.append(pack_signed(quantize_signed(x, 0.92, 1)))
-            settling_dy.append(pack_signed(quantize_signed(y, 1.08, 1)))
+            settling_dx.append(pack_signed(quantize_signed(x, 84.0, 127)))
+            settling_dy.append(pack_signed(quantize_signed(y, 84.0, 127)))
             settling_pulse.append(quantize_pulse(0.84 + (pulse - 0.84) * 0.55))
 
-            mature_dx.append(pack_signed(quantize_signed(x, 0.55, 1)))
-            mature_dy.append(pack_signed(quantize_signed(y, 0.64, 1)))
+            mature_dx.append(pack_signed(quantize_signed(x, 70.0, 127)))
+            mature_dy.append(pack_signed(quantize_signed(y, 70.0, 127)))
             mature_pulse.append(quantize_pulse(0.94 + (pulse - 0.94) * 0.28))
 
     return (
@@ -174,6 +188,22 @@ def build_cloud_banks(
         mature_dy,
         mature_pulse,
     )
+
+
+def smooth_periodic(values: list[float], radius: int) -> list[float]:
+    if radius <= 0:
+        return list(values)
+    count = len(values)
+    result: list[float] = []
+    for index in range(count):
+        total = 0.0
+        weight_sum = 0.0
+        for offset in range(-radius, radius + 1):
+            weight = radius + 1 - abs(offset)
+            total += values[(index + offset) % count] * weight
+            weight_sum += weight
+        result.append(total / weight_sum)
+    return result
 
 
 def quantize_pulse(pulse: float) -> int:
@@ -288,4 +318,3 @@ def build_lightning_templates(seed: int) -> tuple[LightningTemplate, ...]:
             branches.append(LightningBranch(start_index, tuple(branch_points)))
         templates.append(LightningTemplate(tuple(main_points), tuple(branches)))
     return tuple(templates)
-
