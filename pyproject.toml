@@ -1,0 +1,30 @@
+[project]
+name = "mokumoku"
+version = "0.1.0"
+description = "Cloud play game prototype built with Pyxel."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pyxel==2.9.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
