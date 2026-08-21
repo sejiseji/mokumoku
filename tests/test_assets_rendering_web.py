@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from pathlib import Path
 
 import pyxel
-from scripts.build_web import disable_virtual_gamepad
+from scripts.build_web import disable_virtual_gamepad, prune_versioned_builds
 from src.assets.sprite_map import CloudSpriteFamily, cloud_sprite_rect, size_class_for_screen_radius
 from src.camera.camera import build_camera_basis
 from src.camera.projection import project_point
@@ -268,6 +270,25 @@ class AssetsRenderingWebTests(unittest.TestCase):
             self.assertIn('name="mokumoku-build" content="abc123def456"', text)
         finally:
             html_path.unlink(missing_ok=True)
+
+    def test_versioned_web_build_prunes_third_previous_build(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mokumoku_builds_") as temp_dir_name:
+            builds_dir = Path(temp_dir_name)
+            build_names = ("previous_three", "previous_two", "previous_one", "latest")
+            for index, name in enumerate(build_names):
+                build_dir = builds_dir / name
+                build_dir.mkdir()
+                (build_dir / "index.html").write_text(name, encoding="utf-8")
+                timestamp = 1_800_000_000 + index
+                os.utime(build_dir, (timestamp, timestamp))
+
+            pruned_paths = prune_versioned_builds(builds_dir, retain=3)
+
+            self.assertEqual([path.name for path in pruned_paths], ["previous_three"])
+            self.assertFalse((builds_dir / "previous_three").exists())
+            self.assertTrue((builds_dir / "previous_two").exists())
+            self.assertTrue((builds_dir / "previous_one").exists())
+            self.assertTrue((builds_dir / "latest").exists())
 
 
 if __name__ == "__main__":

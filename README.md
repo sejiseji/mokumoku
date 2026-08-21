@@ -66,6 +66,7 @@ GitHub Pages では `docs/` を公開対象にします。
 `build_id` は `.pyxapp` の内容から作る12桁のハッシュです。実機確認では
 `https://sejiseji.github.io/mokumoku/builds/<build_id>/` を使うと、クエリ文字列だけでなく
 HTMLのパスとPyxel起動名も変わるため、Safariのキャッシュに左右されにくくなります。
+固定版ビルドは最新3件だけを保持し、3つ前以降の `docs/builds/` は次回ビルド時に削除します。
 
 確認だけなら Pyxel CLI なしで dry-run できます。
 

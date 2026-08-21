@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ DOCS_DIR = PROJECT_ROOT / "docs"
 BUILDS_DIR = DOCS_DIR / "builds"
 APP_NAME = "mokumoku"
 BUILD_ID_LENGTH = 12
+VERSIONED_BUILD_RETENTION = 3
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class WebBuildResult:
     root_path: Path
     versioned_path: Path
     build_id: str
+    pruned_paths: tuple[Path, ...] = ()
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,6 +91,26 @@ def disable_virtual_gamepad(html_path: Path, build_id: str | None = None) -> Non
     html_path.write_text(text, encoding="utf-8")
 
 
+def prune_versioned_builds(
+    builds_dir: Path,
+    retain: int = VERSIONED_BUILD_RETENTION,
+) -> tuple[Path, ...]:
+    if retain < 1:
+        raise ValueError("retain must be at least 1")
+    if not builds_dir.exists():
+        return ()
+
+    versioned_dirs = sorted(
+        (path for path in builds_dir.iterdir() if path.is_dir()),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
+    )
+    stale_dirs = tuple(versioned_dirs[retain:])
+    for path in stale_dirs:
+        shutil.rmtree(path)
+    return stale_dirs
+
+
 def build_web() -> WebBuildResult:
     ensure_inputs()
     if shutil.which("pyxel") is None:
@@ -128,8 +151,15 @@ def build_web() -> WebBuildResult:
         versioned_path = versioned_dir / "index.html"
         shutil.copy2(html_path, root_path)
         shutil.copy2(html_path, versioned_path)
+        os.utime(versioned_dir, None)
+        pruned_paths = prune_versioned_builds(BUILDS_DIR)
         (DOCS_DIR / ".nojekyll").touch()
-        return WebBuildResult(root_path=root_path, versioned_path=versioned_path, build_id=build_id)
+        return WebBuildResult(
+            root_path=root_path,
+            versioned_path=versioned_path,
+            build_id=build_id,
+            pruned_paths=pruned_paths,
+        )
 
 
 def main() -> int:
@@ -148,6 +178,8 @@ def main() -> int:
     print(f"build id {result.build_id}")
     print(f"wrote {result.root_path.relative_to(PROJECT_ROOT)}")
     print(f"wrote {result.versioned_path.relative_to(PROJECT_ROOT)}")
+    for path in result.pruned_paths:
+        print(f"removed {path.relative_to(PROJECT_ROOT)}")
     return 0
 
 
