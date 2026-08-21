@@ -24,6 +24,13 @@ class EdgePayload:
 
 
 @dataclass(frozen=True)
+class BridgePayload:
+    edge: CloudEdge
+    point: ProjectedPoint
+    sprite: SpriteRect
+
+
+@dataclass(frozen=True)
 class NodePayload:
     node: CloudNode
     projection: ProjectedPoint
@@ -37,7 +44,7 @@ class RenderItem:
     depth: float
     layer_bias: int
     stable_id: int
-    payload: EdgePayload | NodePayload
+    payload: EdgePayload | BridgePayload | NodePayload
 
 
 def collect_cloud_render_items(
@@ -52,6 +59,14 @@ def collect_cloud_render_items(
         projection_a = project_point(node_a.position, camera)
         projection_b = project_point(node_b.position, camera)
         if projection_a.visible and projection_b.visible:
+            bridge = cloud_bridge_payload(
+                edge,
+                node_a,
+                node_b,
+                projection_a,
+                projection_b,
+                camera,
+            )
             items.append(
                 RenderItem(
                     depth=max(projection_a.depth, projection_b.depth),
@@ -60,21 +75,30 @@ def collect_cloud_render_items(
                     payload=EdgePayload(edge, projection_a, projection_b),
                 )
             )
+            if bridge is not None:
+                items.append(
+                    RenderItem(
+                        depth=bridge.point.depth,
+                        layer_bias=1,
+                        stable_id=edge.id,
+                        payload=bridge,
+                    )
+                )
 
     for node in state.live_nodes():
         projection = project_point(node.position, camera)
         if not projection.visible:
             continue
-        offset_x, offset_y, radius_ratio = cloud_node_wobble(node, frame)
-        screen_radius = node.radius * projection.scale * radius_ratio
+        offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
+        screen_radius = node.radius * projection.scale
         sprite = cloud_sprite_rect(
-            choose_cloud_sprite_family(node, state),
+            choose_cloud_sprite_family(node, state, camera, projection),
             size_class_for_screen_radius(screen_radius * max(0.45, node.fade)),
         )
         items.append(
             RenderItem(
                 depth=projection.depth,
-                layer_bias=1,
+                layer_bias=2,
                 stable_id=node.id,
                 payload=NodePayload(node, projection, sprite, offset_x, offset_y),
             )
@@ -84,39 +108,109 @@ def collect_cloud_render_items(
     return items
 
 
-def cloud_node_wobble(node: CloudNode, frame: int) -> tuple[float, float, float]:
-    phase = (node.sprite_seed % 6283) / 1000.0
+def cloud_bridge_payload(
+    edge: CloudEdge,
+    node_a: CloudNode,
+    node_b: CloudNode,
+    projection_a: ProjectedPoint,
+    projection_b: ProjectedPoint,
+    camera: CameraBasis,
+) -> BridgePayload | None:
+    if edge.strain >= config.CLOUD_BRIDGE_MAX_STRAIN:
+        return None
+
+    distance = (
+        (projection_b.screen_x - projection_a.screen_x) ** 2
+        + (projection_b.screen_y - projection_a.screen_y) ** 2
+    ) ** 0.5
+    radius_a = node_a.radius * projection_a.scale
+    radius_b = node_b.radius * projection_b.scale
+    if distance <= (radius_a + radius_b) * 0.55:
+        return None
+
+    midpoint = node_a.position.lerp(node_b.position, 0.5)
+    projection = project_point(midpoint, camera)
+    if not projection.visible:
+        return None
+
+    bridge_radius = min(radius_a, radius_b) * max(0.45, 1.0 - edge.strain * 0.18)
+    sprite = cloud_sprite_rect(
+        CloudSpriteFamily.INTERNAL,
+        size_class_for_screen_radius(bridge_radius),
+    )
+    return BridgePayload(edge, projection, sprite)
+
+
+def cloud_node_wobble(
+    node: CloudNode,
+    state: CloudState | int | None = None,
+    frame: int = 0,
+) -> tuple[float, float, float]:
+    if isinstance(state, int):
+        frame = state
+        state = None
+    cluster_seed = node.cluster_id * 977
+    if state is not None:
+        cluster_seed += len(state.nodes)
+    cluster_phase = (cluster_seed % 6283) / 1000.0
+    local_phase = (node.sprite_seed % 6283) / 1000.0
     seconds = frame / config.FPS
     fade = max(0.0, min(1.0, node.fade))
     activation = 0.35 + node.activation * 0.65
-    amplitude = config.CLOUD_WOBBLE_OFFSET_PX * fade * activation
-    offset_x = math.sin(seconds * 2.1 + phase) * amplitude
-    offset_y = math.cos(seconds * 1.7 + phase * 1.31) * amplitude * 0.75
-    radius_ratio = (
-        1.0
-        + math.sin(seconds * 2.8 + phase * 0.73)
-        * config.CLOUD_WOBBLE_RADIUS_RATIO
-        * fade
-    )
-    return offset_x, offset_y, radius_ratio
+    incubation_factor = max(0.0, min(1.0, node.incubation))
+    cluster_amplitude = config.CLOUD_CLUSTER_WOBBLE_OFFSET_PX * fade
+    local_amplitude = config.CLOUD_LOCAL_WOBBLE_OFFSET_PX * fade * activation
+    local_amplitude *= 1.0 - incubation_factor * 0.75
+
+    cluster_x = math.sin(seconds * 1.35 + cluster_phase) * cluster_amplitude
+    cluster_y = math.cos(seconds * 1.05 + cluster_phase * 1.21) * cluster_amplitude * 0.7
+    local_x = math.sin(seconds * 2.4 + local_phase) * local_amplitude
+    local_y = math.cos(seconds * 1.9 + local_phase * 1.31) * local_amplitude * 0.75
+    return cluster_x + local_x, cluster_y + local_y, 1.0
 
 
-def choose_cloud_sprite_family(node: CloudNode, state: CloudState) -> CloudSpriteFamily:
+def choose_cloud_sprite_family(
+    node: CloudNode,
+    state: CloudState,
+    camera: CameraBasis | None = None,
+    projection: ProjectedPoint | None = None,
+) -> CloudSpriteFamily:
     if node.is_pruning or node.fade < 0.7:
         return CloudSpriteFamily.FADE
-    if node.parent_node_id is None:
-        return CloudSpriteFamily.INTERNAL
-    edge_count = sum(
-        1
-        for edge in state.edges.values()
-        if edge.node_a == node.id or edge.node_b == node.id
-    )
-    if edge_count == 0:
-        return CloudSpriteFamily.FRAGMENT
+    edge_count = 0
+    neighbor_projections: list[ProjectedPoint] = []
+    for edge in state.edges.values():
+        if edge.node_a == node.id:
+            edge_count += 1
+            neighbor = state.nodes[edge.node_b]
+        elif edge.node_b == node.id:
+            edge_count += 1
+            neighbor = state.nodes[edge.node_a]
+        else:
+            continue
+        if camera is not None:
+            neighbor_projection = project_point(neighbor.position, camera)
+            if neighbor_projection.visible:
+                neighbor_projections.append(neighbor_projection)
+
+    if projection is not None and neighbor_projections:
+        is_top = all(other.screen_y > projection.screen_y + 2.0 for other in neighbor_projections)
+        is_bottom = all(
+            other.screen_y < projection.screen_y - 2.0 for other in neighbor_projections
+        )
+        if is_bottom or node.density > 1.35:
+            return CloudSpriteFamily.BOTTOM
+        if is_top or node.updraft > 0.35:
+            return CloudSpriteFamily.UPDRAFT
+        if edge_count >= 3:
+            return CloudSpriteFamily.INTERNAL
+
     if node.updraft > 0.35:
         return CloudSpriteFamily.UPDRAFT
     if node.density > 1.35:
         return CloudSpriteFamily.BOTTOM
+    if edge_count == 0:
+        return CloudSpriteFamily.FRAGMENT
     if node.noise < 0.14:
         return CloudSpriteFamily.INTERNAL
     if any(

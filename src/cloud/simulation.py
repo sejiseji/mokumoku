@@ -178,7 +178,16 @@ class CloudSimulation:
         projection = project_point(parent.position, camera)
         if not projection.visible:
             return None
-        position = screen_to_world_in_cloud_bounds(screen_x, screen_y, projection.depth, camera)
+        target_x = screen_x
+        target_y = screen_y
+        if connect:
+            target_x = projection.screen_x + (
+                screen_x - projection.screen_x
+            ) * config.CONNECTED_TAP_SCREEN_BLEND
+            target_y = projection.screen_y + (
+                screen_y - projection.screen_y
+            ) * config.CONNECTED_TAP_SCREEN_BLEND
+        position = screen_to_world_in_cloud_bounds(target_x, target_y, projection.depth, camera)
         depth_offset = self.rng.uniform(
             -config.CHILD_DEPTH_OFFSET_MAX,
             config.CHILD_DEPTH_OFFSET_MAX,

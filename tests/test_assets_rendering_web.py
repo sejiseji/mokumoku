@@ -10,6 +10,7 @@ from src.camera.camera import build_camera_basis
 from src.camera.projection import project_point
 from src.cloud.graph import add_edge, create_node, recompute_clusters
 from src.cloud.rendering import (
+    BridgePayload,
     EdgePayload,
     NodePayload,
     choose_cloud_sprite_family,
@@ -63,7 +64,7 @@ class AssetsRenderingWebTests(unittest.TestCase):
             simulation.state,
             parent.lineage_id,
             parent.cluster_id,
-            parent.position + Vec3(0.0, 0.0, -18.0),
+            parent.position + Vec3(32.0, 0.0, -10.0),
             simulation.rng,
             parent_node_id=parent.id,
             generation=1,
@@ -87,9 +88,10 @@ class AssetsRenderingWebTests(unittest.TestCase):
         )
         self.assertEqual(items, expected_order)
         self.assertTrue(any(isinstance(item.payload, EdgePayload) for item in items))
+        self.assertTrue(any(isinstance(item.payload, BridgePayload) for item in items))
         self.assertTrue(any(isinstance(item.payload, NodePayload) for item in items))
 
-    def test_sprite_family_uses_fragment_and_fade_states(self) -> None:
+    def test_sprite_family_uses_projected_role_and_attribute_states(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)
         result = simulation.tap_screen(160.0, 190.0, camera)
@@ -98,19 +100,63 @@ class AssetsRenderingWebTests(unittest.TestCase):
 
         self.assertEqual(
             choose_cloud_sprite_family(node, simulation.state),
-            CloudSpriteFamily.INTERNAL,
+            CloudSpriteFamily.FRAGMENT,
         )
 
-        node.parent_node_id = 99
+        node.density = 1.5
         self.assertEqual(
             choose_cloud_sprite_family(node, simulation.state),
-            CloudSpriteFamily.FRAGMENT,
+            CloudSpriteFamily.BOTTOM,
+        )
+
+        node.density = 1.0
+        node.updraft = 0.5
+        self.assertEqual(
+            choose_cloud_sprite_family(node, simulation.state),
+            CloudSpriteFamily.UPDRAFT,
         )
 
         node.is_pruning = True
         self.assertEqual(
             choose_cloud_sprite_family(node, simulation.state),
             CloudSpriteFamily.FADE,
+        )
+
+    def test_sprite_family_uses_projected_top_and_bottom_exposure(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        lower = simulation.state.nodes[result.node_id]
+        upper = create_node(
+            simulation.state,
+            lower.lineage_id,
+            lower.cluster_id,
+            lower.position + Vec3(0.0, 24.0, 0.0),
+            simulation.rng,
+            parent_node_id=lower.id,
+            generation=1,
+        )
+        add_edge(
+            simulation.state,
+            lower.lineage_id,
+            lower.cluster_id,
+            lower.id,
+            upper.id,
+            EdgeKind.PRIMARY,
+        )
+        recompute_clusters(simulation.state, lower.lineage_id)
+
+        lower_projection = project_point(lower.position, camera)
+        upper_projection = project_point(upper.position, camera)
+
+        self.assertEqual(
+            choose_cloud_sprite_family(lower, simulation.state, camera, lower_projection),
+            CloudSpriteFamily.BOTTOM,
+        )
+        self.assertEqual(
+            choose_cloud_sprite_family(upper, simulation.state, camera, upper_projection),
+            CloudSpriteFamily.UPDRAFT,
         )
 
     def test_projected_sprite_rect_has_visible_center(self) -> None:
@@ -133,8 +179,8 @@ class AssetsRenderingWebTests(unittest.TestCase):
         self.assertIsNotNone(result.node_id)
         node = simulation.state.nodes[result.node_id]
 
-        early = cloud_node_wobble(node, 0)
-        later = cloud_node_wobble(node, 30)
+        early = cloud_node_wobble(node, simulation.state, 0)
+        later = cloud_node_wobble(node, simulation.state, 30)
 
         self.assertNotEqual(early, later)
         animated_items = collect_cloud_render_items(simulation.state, camera, frame=30)

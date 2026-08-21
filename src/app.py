@@ -7,7 +7,12 @@ from pathlib import Path
 from src import config
 from src.camera.camera import CameraController
 from src.camera.projection import camera_depth
-from src.cloud.rendering import EdgePayload, NodePayload, collect_cloud_render_items
+from src.cloud.rendering import (
+    BridgePayload,
+    EdgePayload,
+    NodePayload,
+    collect_cloud_render_items,
+)
 from src.cloud.simulation import CloudSimulation
 from src.rng import RandomSource
 
@@ -28,6 +33,44 @@ class ActivePointer:
     selected_node_id: int | None
     dragging: bool = False
     long_press_sent: bool = False
+
+
+@dataclass(frozen=True)
+class CameraButton:
+    direction: int
+    label: str
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+def camera_buttons() -> tuple[CameraButton, CameraButton]:
+    y = config.CAMERA_BUTTON_Y
+    width = config.CAMERA_BUTTON_WIDTH
+    height = config.CAMERA_BUTTON_HEIGHT
+    margin = config.CAMERA_BUTTON_MARGIN_X
+    return (
+        CameraButton(-1, "<", margin, y, width, height),
+        CameraButton(
+            1,
+            ">",
+            config.SCREEN_WIDTH - margin - width,
+            y,
+            width,
+            height,
+        ),
+    )
+
+
+def camera_button_direction_at(screen_x: float, screen_y: float) -> int | None:
+    for button in camera_buttons():
+        if (
+            button.x <= screen_x < button.x + button.width
+            and button.y <= screen_y < button.y + button.height
+        ):
+            return button.direction
+    return None
 
 
 class MokumokuApp:
@@ -51,7 +94,7 @@ class MokumokuApp:
         self.cloud = CloudSimulation(self.rng)
         self.pointer: ActivePointer | None = None
         self.previous_selected_id: int | None = None
-        self.debug_enabled = True
+        self.debug_enabled = False
         self.assets_loaded = False
         self.smoke_frames = smoke_frames
 
@@ -77,11 +120,9 @@ class MokumokuApp:
             pyxel.quit()
 
         if pyxel.btnp(pyxel.KEY_Q):
-            self.camera.request_relative(-1)
-            self.cancel_pointer()
+            self.request_camera_relative(-1)
         if pyxel.btnp(pyxel.KEY_E):
-            self.camera.request_relative(1)
-            self.cancel_pointer()
+            self.request_camera_relative(1)
         if pyxel.btnp(pyxel.KEY_C):
             self.camera.cycle()
             self.cancel_pointer()
@@ -91,12 +132,33 @@ class MokumokuApp:
         if key_f4 is not None and pyxel.btnp(key_f4):
             self.cloud.advance_time(8.0)
 
+        consumed_pointer = self.update_camera_buttons()
         self.camera.update(1.0 / config.FPS)
-        self.update_pointer()
+        if not consumed_pointer:
+            self.update_pointer()
         self.cloud.update(1.0 / config.FPS)
         self.state.frame += 1
         if self.smoke_frames is not None and self.state.frame >= self.smoke_frames:
             pyxel.quit()
+
+    def request_camera_relative(self, direction: int) -> None:
+        self.camera.request_relative(direction)
+        self.cancel_pointer()
+
+    def update_camera_buttons(self) -> bool:
+        pyxel = self.pyxel
+        mouse_button_left = getattr(pyxel, "MOUSE_BUTTON_LEFT", 0)
+        if not pyxel.btnp(mouse_button_left):
+            return False
+
+        direction = camera_button_direction_at(float(pyxel.mouse_x), float(pyxel.mouse_y))
+        if direction is None:
+            return False
+
+        self.cancel_pointer()
+        if self.camera.can_accept_cloud_input():
+            self.request_camera_relative(direction)
+        return True
 
     def update_pointer(self) -> None:
         pyxel = self.pyxel
@@ -193,7 +255,8 @@ class MokumokuApp:
             config.COLOR_UI,
         )
         self.draw_cloud()
-        pyxel.text(8, 8, "MOKUMOKU Prototype A4", config.COLOR_UI)
+        self.draw_camera_buttons()
+        pyxel.text(8, 8, "MOKUMOKU Prototype A4.5", config.COLOR_UI)
         pyxel.text(
             8,
             18,
@@ -209,13 +272,16 @@ class MokumokuApp:
         )
         if self.debug_enabled:
             self.draw_debug()
-        pyxel.text(8, config.SCREEN_HEIGHT - 14, "Q/E/C cam  D debug  F4 age", config.COLOR_UI)
+        pyxel.text(8, config.SCREEN_HEIGHT - 14, "</> cam  D debug  F4 age", config.COLOR_UI)
 
     def draw_cloud(self) -> None:
         camera = self.camera.basis()
         for item in collect_cloud_render_items(self.cloud.state, camera, self.state.frame):
             if isinstance(item.payload, EdgePayload):
-                self.draw_edge_payload(item.payload)
+                if self.debug_enabled:
+                    self.draw_edge_payload(item.payload)
+            elif isinstance(item.payload, BridgePayload):
+                self.draw_bridge_payload(item.payload)
             elif isinstance(item.payload, NodePayload):
                 self.draw_node_payload(item.payload)
 
@@ -229,6 +295,28 @@ class MokumokuApp:
             int(payload.point_b.screen_y),
             color,
         )
+
+    def draw_bridge_payload(self, payload: BridgePayload) -> None:
+        pyxel = self.pyxel
+        projection = payload.point
+        sprite = payload.sprite
+        x = int(projection.screen_x - sprite.width / 2)
+        y = int(projection.screen_y - sprite.height / 2)
+
+        if self.assets_loaded:
+            pyxel.blt(
+                x,
+                y,
+                sprite.image,
+                sprite.u,
+                sprite.v,
+                sprite.width,
+                sprite.height,
+                sprite.colkey,
+            )
+        else:
+            radius = max(2, int(sprite.width / 2))
+            pyxel.circ(int(projection.screen_x), int(projection.screen_y), radius, 7)
 
     def draw_node_payload(self, payload: NodePayload) -> None:
         pyxel = self.pyxel
@@ -252,6 +340,21 @@ class MokumokuApp:
         else:
             radius = max(2, int(node.radius * projection.scale * max(0.25, node.fade)))
             pyxel.circ(x, y, radius, 7)
+
+    def draw_camera_buttons(self) -> None:
+        pyxel = self.pyxel
+        disabled = not self.camera.can_accept_cloud_input()
+        border = 5 if disabled else config.COLOR_UI
+        text_color = 5 if disabled else config.COLOR_UI
+        for button in camera_buttons():
+            pyxel.rect(button.x, button.y, button.width, button.height, config.COLOR_GROUND)
+            pyxel.rectb(button.x, button.y, button.width, button.height, border)
+            pyxel.text(
+                button.x + button.width // 2 - 2,
+                button.y + button.height // 2 - 3,
+                button.label,
+                text_color,
+            )
 
     def draw_debug(self) -> None:
         pyxel = self.pyxel
