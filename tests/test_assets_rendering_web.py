@@ -211,6 +211,45 @@ class AssetsRenderingWebTests(unittest.TestCase):
             CloudSpriteFamily.UPDRAFT,
         )
 
+    def test_sprite_family_uses_projected_internal_when_surrounded(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        center = simulation.state.nodes[result.node_id]
+        offsets = (
+            Vec3(-24.0, 0.0, 0.0),
+            Vec3(24.0, 0.0, 0.0),
+            Vec3(0.0, -24.0, 0.0),
+            Vec3(0.0, 24.0, 0.0),
+        )
+        for offset in offsets:
+            neighbor = create_node(
+                simulation.state,
+                center.lineage_id,
+                center.cluster_id,
+                center.position + offset,
+                simulation.rng,
+                parent_node_id=center.id,
+                generation=1,
+            )
+            add_edge(
+                simulation.state,
+                center.lineage_id,
+                center.cluster_id,
+                center.id,
+                neighbor.id,
+                EdgeKind.PRIMARY,
+            )
+        recompute_clusters(simulation.state, center.lineage_id)
+
+        center_projection = project_point(center.position, camera)
+
+        self.assertEqual(
+            choose_cloud_sprite_family(center, simulation.state, camera, center_projection),
+            CloudSpriteFamily.INTERNAL,
+        )
+
     def test_projected_sprite_rect_has_visible_center(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)

@@ -215,6 +215,31 @@ def single_node_mesh_phase(node: CloudNode, frame: int) -> float:
     return seconds * math.tau / config.CLOUD_SINGLE_MESH_PERIOD + phase
 
 
+def projected_cloud_sprite_family(
+    node: CloudNode,
+    edge_count: int,
+    projection: ProjectedPoint,
+    neighbor_projections: list[ProjectedPoint],
+) -> CloudSpriteFamily:
+    gap = config.CLOUD_ROLE_EXPOSURE_GAP_PX
+    has_above = any(other.screen_y < projection.screen_y - gap for other in neighbor_projections)
+    has_below = any(other.screen_y > projection.screen_y + gap for other in neighbor_projections)
+    has_left = any(other.screen_x < projection.screen_x - gap for other in neighbor_projections)
+    has_right = any(other.screen_x > projection.screen_x + gap for other in neighbor_projections)
+
+    if edge_count >= 4 and has_above and has_below and has_left and has_right:
+        return CloudSpriteFamily.INTERNAL
+    if has_above and not has_below:
+        return CloudSpriteFamily.BOTTOM
+    if has_below and not has_above:
+        return CloudSpriteFamily.UPDRAFT
+    if edge_count >= 3 and has_left and has_right and (has_above or has_below):
+        return CloudSpriteFamily.INTERNAL
+    if node.noise < 0.14 and edge_count >= 3:
+        return CloudSpriteFamily.INTERNAL
+    return CloudSpriteFamily.EDGE
+
+
 def choose_cloud_sprite_family(
     node: CloudNode,
     state: CloudState,
@@ -240,16 +265,7 @@ def choose_cloud_sprite_family(
                 neighbor_projections.append(neighbor_projection)
 
     if projection is not None and neighbor_projections:
-        is_top = all(other.screen_y > projection.screen_y + 2.0 for other in neighbor_projections)
-        is_bottom = all(
-            other.screen_y < projection.screen_y - 2.0 for other in neighbor_projections
-        )
-        if is_bottom or node.density > 1.35:
-            return CloudSpriteFamily.BOTTOM
-        if is_top or node.updraft > 0.35:
-            return CloudSpriteFamily.UPDRAFT
-        if edge_count >= 3:
-            return CloudSpriteFamily.INTERNAL
+        return projected_cloud_sprite_family(node, edge_count, projection, neighbor_projections)
 
     if node.updraft > 0.35:
         return CloudSpriteFamily.UPDRAFT
