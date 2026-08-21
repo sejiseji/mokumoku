@@ -37,6 +37,8 @@ class NodePayload:
     sprite: SpriteRect
     offset_x: float = 0.0
     offset_y: float = 0.0
+    mesh_intensity: float = 0.0
+    mesh_phase: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,8 @@ def collect_cloud_render_items(
             continue
         offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
         screen_radius = node.radius * projection.scale
+        mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
+        mesh_phase = single_node_mesh_phase(node, frame)
         sprite = cloud_sprite_rect(
             choose_cloud_sprite_family(node, state, camera, projection),
             size_class_for_screen_radius(screen_radius * max(0.45, node.fade)),
@@ -100,7 +104,15 @@ def collect_cloud_render_items(
                 depth=projection.depth,
                 layer_bias=2,
                 stable_id=node.id,
-                payload=NodePayload(node, projection, sprite, offset_x, offset_y),
+                payload=NodePayload(
+                    node,
+                    projection,
+                    sprite,
+                    offset_x,
+                    offset_y,
+                    mesh_intensity,
+                    mesh_phase,
+                ),
             )
         )
 
@@ -189,6 +201,38 @@ def cloud_node_wobble(
         * 0.75
     )
     return cluster_x + local_x, cluster_y + local_y, 1.0
+
+
+def node_edge_count(node_id: int, state: CloudState) -> int:
+    return sum(
+        1
+        for edge in state.edges.values()
+        if edge.node_a == node_id or edge.node_b == node_id
+    )
+
+
+def single_node_mesh_intensity(
+    node: CloudNode,
+    state: CloudState,
+    screen_radius: float,
+) -> float:
+    if node.is_pruning or node.fade <= 0.0:
+        return 0.0
+    if node_edge_count(node.id, state) > 0:
+        return 0.0
+
+    size_t = screen_radius / max(1.0, config.CLOUD_SINGLE_MESH_RADIUS_MAX)
+    size_factor = max(0.0, min(1.0, 1.0 - size_t))
+    seed_mass_range = max(1.0, config.RETENTION_GROWN_MASS)
+    growth_t = max(0.0, min(1.0, (node.mass - config.SEED_MASS) / seed_mass_range))
+    growth_factor = 1.0 - growth_t * 0.65
+    return max(0.0, min(1.0, size_factor * growth_factor * node.fade))
+
+
+def single_node_mesh_phase(node: CloudNode, frame: int) -> float:
+    seconds = frame / config.FPS
+    phase = (node.sprite_seed % 6283) / 1000.0
+    return seconds * math.tau / config.CLOUD_SINGLE_MESH_PERIOD + phase
 
 
 def choose_cloud_sprite_family(

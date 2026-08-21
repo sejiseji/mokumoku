@@ -338,9 +338,38 @@ class MokumokuApp:
                 sprite.height,
                 sprite.colkey,
             )
+            if payload.mesh_intensity > 0.0:
+                self.draw_single_cloud_mesh(payload, x, y)
         else:
             radius = max(2, int(node.radius * projection.scale * max(0.25, node.fade)))
             pyxel.circ(x, y, radius, 7)
+
+    def draw_single_cloud_mesh(self, payload: NodePayload, x: int, y: int) -> None:
+        pyxel = self.pyxel
+        sprite = payload.sprite
+        phase = payload.mesh_phase
+        intensity = payload.mesh_intensity
+        cx = x + sprite.width // 2
+        cy = y + sprite.height // 2
+        radius = max(4, int(sprite.width * 0.42))
+        color = 6 if intensity > 0.45 else 5
+        drift = math.sin(phase) * radius * 0.22
+
+        for band in (-0.34, 0.12, 0.45):
+            band_y = int(cy + band * radius + drift * (0.5 + abs(band)))
+            half = int(radius * (1.0 - abs(band) * 0.42))
+            middle_y = int(band_y + math.sin(phase + band * 2.7) * 1.2)
+            pyxel.line(cx - half, band_y, cx, middle_y, color)
+            pyxel.line(cx, middle_y, cx + half, band_y, color)
+
+        diagonal_shift = int(math.cos(phase * 0.7) * radius * 0.2)
+        pyxel.line(
+            cx - radius + 2,
+            cy - radius // 2 + diagonal_shift,
+            cx + radius - 2,
+            cy + radius // 2 + diagonal_shift,
+            color,
+        )
 
     def draw_camera_buttons(self) -> None:
         pyxel = self.pyxel

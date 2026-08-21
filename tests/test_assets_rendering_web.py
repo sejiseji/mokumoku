@@ -16,6 +16,8 @@ from src.cloud.rendering import (
     choose_cloud_sprite_family,
     cloud_node_wobble,
     collect_cloud_render_items,
+    single_node_mesh_intensity,
+    single_node_mesh_phase,
 )
 from src.cloud.simulation import CloudSimulation
 from src.enums import EdgeKind
@@ -201,6 +203,49 @@ class AssetsRenderingWebTests(unittest.TestCase):
         delta = ((second[0] - first[0]) ** 2 + (second[1] - first[1]) ** 2) ** 0.5
 
         self.assertLess(delta, 0.006)
+
+    def test_small_single_cloud_uses_slow_mesh_overlay(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        node = simulation.state.nodes[result.node_id]
+        projection = project_point(node.position, camera)
+
+        intensity = single_node_mesh_intensity(
+            node,
+            simulation.state,
+            node.radius * projection.scale,
+        )
+        phase_a = single_node_mesh_phase(node, 30)
+        phase_b = single_node_mesh_phase(node, 31)
+
+        self.assertGreater(intensity, 0.0)
+        self.assertLess(phase_b - phase_a, 0.008)
+        items = collect_cloud_render_items(simulation.state, camera, frame=30)
+        node_payloads = [
+            item.payload for item in items if isinstance(item.payload, NodePayload)
+        ]
+        self.assertTrue(any(payload.mesh_intensity > 0.0 for payload in node_payloads))
+
+    def test_connected_cloud_suppresses_single_mesh_overlay(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        parent = simulation.state.nodes[result.node_id]
+        projection = project_point(parent.position, camera)
+        child = simulation.tap_screen(projection.screen_x + 30.0, projection.screen_y, camera)
+        self.assertIsNotNone(child.node_id)
+
+        parent_projection = project_point(parent.position, camera)
+        intensity = single_node_mesh_intensity(
+            parent,
+            simulation.state,
+            parent.radius * parent_projection.scale,
+        )
+
+        self.assertEqual(intensity, 0.0)
 
     def test_web_html_postprocess_disables_gamepad_and_touch_scrolling(self) -> None:
         html_path = PROJECT_ROOT / "docs" / "_postprocess_test.html"
