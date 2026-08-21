@@ -2,7 +2,7 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A / A3 です。A0/A1/A2 基盤に加えて、局所熟成、ノイズ減衰、平滑化、冗長統合、剪定フェード、完全消滅、消滅後の次の種生成を実装しています。雲素材はまだ仮描画で、`assets/mokumoku.pyxres` への差し替えは A4 で行います。
+現在の実装範囲は Prototype A / A4 です。A0〜A3 基盤に加えて、`assets/mokumoku.pyxres` の雲パーツ読み込み、スプライトマップ、深度順描画、Web 向け touch 設定を実装しています。
 
 ## Requirements
 
@@ -21,6 +21,12 @@ python3 -m pip install -e '.[dev]'
 
 ```bash
 python main.py --seed 12345
+```
+
+GUI なしの起動スモーク:
+
+```bash
+python main.py --headless --smoke-frames 5
 ```
 
 - `Q`: 左カメラへ
@@ -47,6 +53,7 @@ python3 -m unittest discover -s tests
 Pyxel CLI が使える環境で実行します。
 
 ```bash
+python3 scripts/generate_mokumoku_resource.py
 python3 scripts/build_web.py
 ```
 

@@ -38,6 +38,16 @@ class A0ProjectTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("dry-run ok", result.stdout)
 
+    def test_main_headless_smoke(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "main.py", "--headless", "--smoke-frames", "3"],
+            cwd=PROJECT_ROOT,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

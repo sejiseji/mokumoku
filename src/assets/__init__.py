@@ -1,0 +1,1 @@
+"""Asset metadata for MOKUMOKU."""

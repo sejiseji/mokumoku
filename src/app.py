@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 
 from src import config
 from src.camera.camera import CameraController
-from src.camera.projection import camera_depth, project_point
+from src.camera.projection import camera_depth
+from src.cloud.rendering import EdgePayload, NodePayload, collect_cloud_render_items
 from src.cloud.simulation import CloudSimulation
 from src.rng import RandomSource
 
@@ -34,7 +36,12 @@ class MokumokuApp:
     Cloud simulation and gameplay are intentionally left for later Prototype A waves.
     """
 
-    def __init__(self, seed: int) -> None:
+    def __init__(
+        self,
+        seed: int,
+        headless: bool = False,
+        smoke_frames: int | None = None,
+    ) -> None:
         import pyxel
 
         self.pyxel = pyxel
@@ -45,14 +52,24 @@ class MokumokuApp:
         self.pointer: ActivePointer | None = None
         self.previous_selected_id: int | None = None
         self.debug_enabled = True
+        self.assets_loaded = False
+        self.smoke_frames = smoke_frames
 
         pyxel.init(
             config.SCREEN_WIDTH,
             config.SCREEN_HEIGHT,
             title=config.WINDOW_TITLE,
             fps=config.FPS,
+            headless=headless,
         )
+        self.load_assets()
         pyxel.run(self.update, self.draw)
+
+    def load_assets(self) -> None:
+        resource_path = Path(config.PYXEL_RESOURCE_PATH)
+        if resource_path.exists():
+            self.pyxel.load(str(resource_path))
+            self.assets_loaded = True
 
     def update(self) -> None:
         pyxel = self.pyxel
@@ -78,6 +95,8 @@ class MokumokuApp:
         self.update_pointer()
         self.cloud.update(1.0 / config.FPS)
         self.state.frame += 1
+        if self.smoke_frames is not None and self.state.frame >= self.smoke_frames:
+            pyxel.quit()
 
     def update_pointer(self) -> None:
         pyxel = self.pyxel
@@ -174,7 +193,7 @@ class MokumokuApp:
             config.COLOR_UI,
         )
         self.draw_cloud()
-        pyxel.text(8, 8, "MOKUMOKU Prototype A3", config.COLOR_UI)
+        pyxel.text(8, 8, "MOKUMOKU Prototype A4", config.COLOR_UI)
         pyxel.text(
             8,
             18,
@@ -193,50 +212,46 @@ class MokumokuApp:
         pyxel.text(8, config.SCREEN_HEIGHT - 14, "Q/E/C cam  D debug  F4 age", config.COLOR_UI)
 
     def draw_cloud(self) -> None:
-        pyxel = self.pyxel
         camera = self.camera.basis()
-        edge_items = []
-        for edge in self.cloud.state.live_edges():
-            node_a = self.cloud.state.nodes[edge.node_a]
-            node_b = self.cloud.state.nodes[edge.node_b]
-            projection_a = project_point(node_a.position, camera)
-            projection_b = project_point(node_b.position, camera)
-            if projection_a.visible and projection_b.visible:
-                edge_items.append(
-                    (
-                        max(projection_a.depth, projection_b.depth),
-                        edge.id,
-                        projection_a,
-                        projection_b,
-                    )
-                )
-        for _, _, projection_a, projection_b in sorted(edge_items, reverse=True):
-            pyxel.line(
-                int(projection_a.screen_x),
-                int(projection_a.screen_y),
-                int(projection_b.screen_x),
-                int(projection_b.screen_y),
-                5,
-            )
+        for item in collect_cloud_render_items(self.cloud.state, camera):
+            if isinstance(item.payload, EdgePayload):
+                self.draw_edge_payload(item.payload)
+            elif isinstance(item.payload, NodePayload):
+                self.draw_node_payload(item.payload)
 
-        node_items = []
-        for node in self.cloud.state.live_nodes():
-            projection = project_point(node.position, camera)
-            if projection.visible:
-                node_items.append((projection.depth, node.id, node, projection))
-        for _, _, node, projection in sorted(node_items, reverse=True):
+    def draw_edge_payload(self, payload: EdgePayload) -> None:
+        pyxel = self.pyxel
+        color = 5 if payload.edge.strain < 1.6 else 4
+        pyxel.line(
+            int(payload.point_a.screen_x),
+            int(payload.point_a.screen_y),
+            int(payload.point_b.screen_x),
+            int(payload.point_b.screen_y),
+            color,
+        )
+
+    def draw_node_payload(self, payload: NodePayload) -> None:
+        pyxel = self.pyxel
+        node = payload.node
+        projection = payload.projection
+        sprite = payload.sprite
+        x = int(projection.screen_x - sprite.width / 2)
+        y = int(projection.screen_y - sprite.height / 2)
+
+        if self.assets_loaded:
+            pyxel.blt(
+                x,
+                y,
+                sprite.image,
+                sprite.u,
+                sprite.v,
+                sprite.width,
+                sprite.height,
+                sprite.colkey,
+            )
+        else:
             radius = max(2, int(node.radius * projection.scale * max(0.25, node.fade)))
-            x = int(projection.screen_x)
-            y = int(projection.screen_y)
-            if node.is_pruning:
-                color = 6 if node.fade > 0.45 else 5
-            else:
-                color = 7 if node.id != self.previous_selected_id else 8
-            shadow = 5 if node.density < 1.4 else 4
-            pyxel.circ(x + 1, y + 2, radius, shadow)
-            pyxel.circ(x, y, radius, color)
-            if node.noise > 0.2:
-                pyxel.circb(x, y, radius, 6)
+            pyxel.circ(x, y, radius, 7)
 
     def draw_debug(self) -> None:
         pyxel = self.pyxel
@@ -258,5 +273,5 @@ class MokumokuApp:
         pyxel.text(8, 70, f"mature {mature} pruning {pruning}", config.COLOR_UI)
 
 
-def run(seed: int = 12345) -> None:
-    MokumokuApp(seed=seed)
+def run(seed: int = 12345, headless: bool = False, smoke_frames: int | None = None) -> None:
+    MokumokuApp(seed=seed, headless=headless, smoke_frames=smoke_frames)

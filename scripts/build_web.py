@@ -27,6 +27,7 @@ def ensure_inputs() -> None:
         PROJECT_ROOT / "main.py",
         PROJECT_ROOT / "src" / "app.py",
         PROJECT_ROOT / "pyproject.toml",
+        PROJECT_ROOT / "assets" / "mokumoku.pyxres",
     ]
     missing = [path for path in required if not path.exists()]
     if missing:
@@ -42,6 +43,20 @@ def disable_virtual_gamepad(html_path: Path) -> None:
     text = html_path.read_text(encoding="utf-8")
     text = text.replace(', gamepad: "enabled"', "")
     text = text.replace('gamepad: "enabled",', "")
+    text = text.replace("kitao/pyxel@2.7.0", "kitao/pyxel@2.9.9")
+    mobile_head = (
+        '<head><meta name="viewport" content="width=device-width, initial-scale=1.0, '
+        'viewport-fit=cover, user-scalable=no">'
+        "<style>html,body,canvas{touch-action:none;overscroll-behavior:none;}"
+        "body{margin:0;background:#111;}</style></head>"
+    )
+    if "touch-action:none" not in text:
+        if "</head>" in text:
+            text = text.replace("</head>", mobile_head.removeprefix("<head>"))
+        elif "<head>" in text:
+            text = text.replace("<head>", mobile_head)
+        else:
+            text = text.replace("<!doctype html>\n", f"<!doctype html>\n{mobile_head}\n", 1)
     html_path.write_text(text, encoding="utf-8")
 
 
@@ -65,6 +80,8 @@ def build_web() -> Path:
                 ".ruff_cache",
                 "*.egg-info",
                 "docs",
+                "scripts",
+                "tests",
             ),
         )
 
