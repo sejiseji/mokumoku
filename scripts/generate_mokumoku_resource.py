@@ -16,50 +16,106 @@ def draw_blob(image, x: int, y: int, size: int, family) -> None:
 
     cx = x + size // 2
     cy = y + size // 2
-    r = max(3, size // 4)
+    scale = size / 16.0
+
+    def unit(value: float) -> int:
+        return int(round(value * scale))
 
     def puff(px: int, py: int, radius: int, color: int) -> None:
-        image.circ(cx + px, cy + py, max(1, radius), color)
+        image.circ(cx + unit(px), cy + unit(py), max(1, unit(radius)), color)
 
-    def lumpy(base: int, light: int = 7, accent: int = 8, stretch: int = 0) -> None:
-        puff(-r - 1 - stretch, 1, r + 1, base)
-        puff(0, -r // 2, r + 2, base)
-        puff(r + stretch, 1, r + 1, base)
-        puff(-r // 2, r // 2 + 1, r + 1, base)
-        puff(r // 2 + stretch, r // 2 + 1, r, base)
-        puff(-r - 1 - stretch, 0, r, light)
-        puff(0, -r // 2 - 1, r + 1, light)
-        puff(r - 1 + stretch, 0, r, light)
-        puff(-r // 2, r // 2, r, light)
-        image.pset(cx - r // 2, cy - r // 2, accent)
+    def cut(px: int, py: int, radius: int) -> None:
+        puff(px, py, radius, 0)
+
+    def mark(px: int, py: int, color: int) -> None:
+        image.pset(cx + unit(px), cy + unit(py), color)
+
+    def lumpy(
+        base: int,
+        light: int = 7,
+        accent: int = 8,
+        puffs: tuple[tuple[int, int, int], ...] = (),
+        cuts: tuple[tuple[int, int, int], ...] = (),
+    ) -> None:
+        for px, py, radius in puffs:
+            puff(px, py, radius + 1, base)
+        for px, py, radius in puffs:
+            puff(px - 1, py - 1, radius, light)
+        for px, py, radius in cuts:
+            cut(px, py, radius)
+        mark(-3, -3, accent)
 
     if family is CloudSpriteFamily.INTERNAL:
-        lumpy(6, 7, 8)
+        lumpy(
+            6,
+            7,
+            8,
+            puffs=((-5, 1, 4), (-1, -3, 5), (5, -1, 3), (2, 4, 4), (-4, 5, 3)),
+            cuts=((7, 4, 2), (-7, -4, 2)),
+        )
     elif family is CloudSpriteFamily.EDGE:
-        lumpy(5, 7, 6, stretch=1)
+        lumpy(
+            5,
+            7,
+            6,
+            puffs=((-6, 0, 4), (-1, -4, 4), (5, -2, 3), (3, 4, 4), (-5, 5, 3)),
+            cuts=((7, 2, 3), (4, -6, 2)),
+        )
     elif family is CloudSpriteFamily.BOTTOM:
-        lumpy(5, 7, 4)
-        image.line(cx - r - 3, cy + r + 1, cx + r + 4, cy + r + 1, 4)
+        lumpy(
+            5,
+            7,
+            4,
+            puffs=((-6, 1, 4), (-1, -3, 4), (5, 0, 3), (-3, 4, 3), (4, 4, 3)),
+            cuts=((-7, -5, 2), (7, -4, 2)),
+        )
+        image.line(cx + unit(-7), cy + unit(6), cx + unit(7), cy + unit(6), 4)
     elif family is CloudSpriteFamily.UPDRAFT:
-        lumpy(6, 7, 8)
-        puff(0, -r - 3, max(2, r - 1), 8)
+        lumpy(
+            6,
+            7,
+            8,
+            puffs=((-5, 2, 4), (-1, -4, 4), (2, -7, 3), (5, 1, 3), (0, 4, 4)),
+            cuts=((-8, -3, 2), (7, 5, 2)),
+        )
+        mark(1, -7, 15)
     elif family is CloudSpriteFamily.STRETCH:
-        lumpy(6, 7, 8, stretch=2)
+        lumpy(
+            6,
+            7,
+            8,
+            puffs=((-7, 1, 3), (-3, -2, 4), (2, -1, 4), (7, 1, 3), (1, 4, 3)),
+            cuts=((-8, -4, 2), (8, 4, 2)),
+        )
     elif family is CloudSpriteFamily.FRAGMENT:
-        puff(-r // 2, -1, max(2, r - 1), 5)
-        puff(r // 2, 1, max(2, r - 2), 6)
-        puff(-1, -r // 2, max(2, r - 2), 7)
+        puff(-3, 0, 3, 5)
+        puff(2, 1, 3, 6)
+        puff(-1, -4, 2, 7)
+        cut(5, -3, 2)
     elif family is CloudSpriteFamily.FADE:
-        puff(-r // 2, 0, max(2, r - 1), 6)
-        puff(r // 2, 1, max(2, r - 2), 5)
-        image.pset(cx - 2, cy - 1, 7)
+        puff(-3, 0, 3, 6)
+        puff(2, 1, 2, 5)
+        mark(-2, -1, 7)
+        mark(4, 3, 5)
     elif family is CloudSpriteFamily.SERENDIPITY:
-        lumpy(7, 8, 15)
+        lumpy(
+            7,
+            8,
+            15,
+            puffs=((-5, 1, 4), (-1, -4, 4), (5, -1, 3), (1, 4, 4)),
+            cuts=((7, 4, 2),),
+        )
     elif family is CloudSpriteFamily.CHARGE:
-        lumpy(6, 7, 10)
-        image.line(cx - 2, cy - r - 1, cx + 2, cy - 1, 10)
-        image.line(cx + 2, cy - 1, cx - 1, cy, 10)
-        image.line(cx - 1, cy, cx + 3, cy + r, 10)
+        lumpy(
+            6,
+            7,
+            10,
+            puffs=((-5, 1, 4), (-1, -3, 4), (5, 0, 3), (1, 4, 4)),
+            cuts=((-7, -4, 2),),
+        )
+        image.line(cx + unit(-2), cy + unit(-6), cx + unit(2), cy + unit(-1), 10)
+        image.line(cx + unit(2), cy + unit(-1), cx + unit(-1), cy + unit(0), 10)
+        image.line(cx + unit(-1), cy + unit(0), cx + unit(3), cy + unit(5), 10)
 
 
 def generate_resource() -> Path:

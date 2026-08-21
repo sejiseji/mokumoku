@@ -133,7 +133,9 @@ def cloud_bridge_payload(
     if not projection.visible:
         return None
 
-    bridge_radius = min(radius_a, radius_b) * max(0.45, 1.0 - edge.strain * 0.18)
+    strain_span = max(0.001, config.CLOUD_BRIDGE_MAX_STRAIN - config.CLOUD_BRIDGE_MIN_STRAIN)
+    strain_t = max(0.0, min(1.0, (edge.strain - config.CLOUD_BRIDGE_MIN_STRAIN) / strain_span))
+    bridge_radius = min(radius_a, radius_b) * (0.72 - strain_t * 0.34)
     sprite = cloud_sprite_rect(
         CloudSpriteFamily.INTERNAL,
         size_class_for_screen_radius(bridge_radius),

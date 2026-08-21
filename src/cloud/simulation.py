@@ -14,6 +14,7 @@ from src.cloud.graph import (
     add_edge,
     break_overstretched_edges,
     create_node,
+    desired_edge_rest_length,
     recompute_clusters,
     split_node_from_cluster,
     try_merge_clusters,
@@ -286,9 +287,40 @@ class CloudSimulation:
             node.activation = max(0.0, node.activation - dt * 0.12)
         for edge in self.state.edges.values():
             edge.age += dt
+        self.relax_connected_edges(dt)
         try_merge_clusters(self.state)
         update_incubation(self.state, dt)
         self.finalize_extinct_lineages()
+
+    def relax_connected_edges(self, dt: float) -> None:
+        for edge in self.state.edges.values():
+            if edge.node_a not in self.state.nodes or edge.node_b not in self.state.nodes:
+                continue
+            first = self.state.nodes[edge.node_a]
+            second = self.state.nodes[edge.node_b]
+            delta = second.position - first.position
+            distance = delta.length()
+            if distance <= 0.001:
+                continue
+
+            edge.rest_length = desired_edge_rest_length(self.state, edge.node_a, edge.node_b)
+            edge.strain = distance / max(1.0, edge.rest_length)
+            compression_limit = edge.rest_length * config.EDGE_COMPRESSION_RATIO
+            if compression_limit <= distance <= edge.rest_length:
+                continue
+
+            target = edge.rest_length if distance > edge.rest_length else compression_limit
+            correction = (distance - target) * min(1.0, config.EDGE_COHESION_RATE * dt)
+            correction *= edge.stiffness
+            direction = delta / distance
+            movement = direction * (correction * 0.5)
+
+            first.previous_position = first.position
+            second.previous_position = second.position
+            first.position = first.position + movement
+            second.position = second.position - movement
+            first.velocity = (first.position - first.previous_position) * config.FPS
+            second.velocity = (second.position - second.previous_position) * config.FPS
 
     def advance_time(self, seconds: float, step: float = 1.0 / 60.0) -> None:
         remaining = seconds

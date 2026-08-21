@@ -21,6 +21,12 @@ def edge_length(state: CloudState, edge: CloudEdge) -> float:
     return state.nodes[edge.node_a].position.distance_to(state.nodes[edge.node_b].position)
 
 
+def desired_edge_rest_length(state: CloudState, node_a: int, node_b: int) -> float:
+    first = state.nodes[node_a]
+    second = state.nodes[node_b]
+    return max(1.0, (first.radius + second.radius) * config.EDGE_REST_RADIUS_RATIO)
+
+
 def add_edge(
     state: CloudState,
     lineage_id: int,
@@ -39,7 +45,7 @@ def add_edge(
         if {edge.node_a, edge.node_b} == {node_a, node_b}:
             return edge
 
-    rest_length = state.nodes[node_a].position.distance_to(state.nodes[node_b].position)
+    rest_length = desired_edge_rest_length(state, node_a, node_b)
     edge = CloudEdge(
         id=state.next_edge_id,
         lineage_id=lineage_id,
@@ -185,6 +191,7 @@ def break_overstretched_edges(state: CloudState) -> list[int]:
     broken: list[int] = []
     for edge in list(state.edges.values()):
         current_length = edge_length(state, edge)
+        edge.rest_length = desired_edge_rest_length(state, edge.node_a, edge.node_b)
         edge.strain = current_length / max(1.0, edge.rest_length)
         if edge.strain >= config.EDGE_BREAK_RATIO:
             broken.append(edge.id)

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import unittest
 
+from src import config
 from src.camera.camera import build_camera_basis
 from src.camera.projection import camera_depth, project_point
-from src.cloud.graph import node_degree
+from src.cloud.graph import desired_edge_rest_length, node_degree
 from src.cloud.simulation import CloudSimulation
 from src.math3d import Vec3
 from src.rng import RandomSource
@@ -68,6 +69,38 @@ class CloudGraphTests(unittest.TestCase):
         self.assertEqual(len(simulation.state.nodes), 2)
         self.assertEqual(len(simulation.state.edges), 1)
         self.assertEqual(node_degree(simulation.state, node_id), 1)
+
+    def test_primary_edge_rest_length_uses_node_radii_for_overlap(self) -> None:
+        simulation, camera, node_id = self.seed_cloud()
+        projection = project_point(simulation.state.nodes[node_id].position, camera)
+
+        result = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        self.assertIsNotNone(result.node_id)
+        edge = next(iter(simulation.state.edges.values()))
+
+        self.assertAlmostEqual(
+            edge.rest_length,
+            desired_edge_rest_length(simulation.state, edge.node_a, edge.node_b),
+        )
+        expected = (
+            simulation.state.nodes[edge.node_a].radius
+            + simulation.state.nodes[edge.node_b].radius
+        ) * config.EDGE_REST_RADIUS_RATIO
+        self.assertAlmostEqual(edge.rest_length, expected)
+
+    def test_edge_cohesion_pulls_connected_nodes_toward_overlap(self) -> None:
+        simulation, camera, node_id = self.seed_cloud()
+        projection = project_point(simulation.state.nodes[node_id].position, camera)
+        child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        self.assertIsNotNone(child.node_id)
+        parent = simulation.state.nodes[node_id]
+        child_node = simulation.state.nodes[child.node_id]
+        old_distance = parent.position.distance_to(child_node.position)
+
+        simulation.update(1.0 / 6.0)
+
+        new_distance = parent.position.distance_to(child_node.position)
+        self.assertLess(new_distance, old_distance)
 
     def test_long_press_condenses_node(self) -> None:
         simulation, _, node_id = self.seed_cloud()
