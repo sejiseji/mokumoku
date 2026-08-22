@@ -5,7 +5,7 @@ from enum import IntEnum
 from src import config
 from src.cloud.model import CloudNode, CloudState
 from src.motion.atlas import WeatherMotionAtlas
-from src.motion.runtime import WeatherMotionRuntime, hysteresis_step
+from src.motion.runtime import WeatherMotionRuntime
 
 
 class CloudMotionState(IntEnum):
@@ -32,59 +32,7 @@ def cloud_render_offset(
 ) -> tuple[float, float, float]:
     if node.id not in state.nodes:
         return 0.0, 0.0, 1.0
-
-    motion_state = cloud_motion_state_for_node(node)
-    held_frame = frame - (frame % config.CLOUD_LOCAL_MOTION_HOLD_FRAMES)
-    node_phase = phase_index(atlas, held_frame, (node.sprite_seed * 73) & 0x7FFFFFFF)
-    cluster_phase = phase_index(atlas, frame, cluster_seed(node))
-    sync_level = sync_level_for_node(node, motion_state)
-    effective_node_phase = lerp_phase(node_phase, cluster_phase, sync_level, atlas.phase_count)
-
-    node_group = node.sprite_seed % atlas.group_count
-    cluster_group = cluster_seed(node) % atlas.group_count
-    local_raw_x, local_raw_y, local_pulse = cloud_bank_offset(
-        atlas,
-        motion_state,
-        node_group,
-        effective_node_phase,
-    )
-    cluster_raw_x, cluster_raw_y, cluster_pulse = cloud_bank_offset(
-        atlas,
-        motion_state,
-        cluster_group,
-        cluster_phase,
-    )
-
-    _cluster_weight, local_weight = motion_weights(motion_state)
-    cluster_key = cluster_seed(node)
-    if runtime is None:
-        cluster_dx, cluster_dy = stateless_cluster_offset(cluster_raw_x, cluster_raw_y)
-    else:
-        cluster_dx, cluster_dy = runtime.cluster_offset(
-            cluster_key,
-            cluster_raw_x,
-            cluster_raw_y,
-            frame,
-            int(motion_state),
-            size_class,
-        )
-
-    if motion_state is CloudMotionState.ACTIVE and runtime is not None:
-        runtime.local_offset(
-            node.id,
-            local_raw_x,
-            local_raw_y,
-            frame,
-            int(motion_state),
-            size_class,
-        )
-
-    dx = clamp_motion_offset(float(cluster_dx))
-    dy = clamp_motion_offset(float(cluster_dy))
-    pulse = (cluster_pulse * (1.0 - local_weight) + local_pulse * local_weight) / 15.0
-    radius_ratio = 1.0 + (pulse - 0.5) * 0.02
-
-    return dx, dy, radius_ratio
+    return 0.0, 0.0, 1.0
 
 
 def cloud_shape_level(node: CloudNode, atlas: WeatherMotionAtlas, frame: int) -> int:
@@ -98,23 +46,6 @@ def cloud_shape_level(node: CloudNode, atlas: WeatherMotionAtlas, frame: int) ->
     else:
         group = cluster_seed(node) % atlas.group_count
     return atlas.cloud_shape(group, effective_phase)
-
-
-def cloud_cluster_pose_level(
-    node: CloudNode,
-    atlas: WeatherMotionAtlas,
-    frame: int,
-    runtime: WeatherMotionRuntime | None = None,
-    size_class: str = "m",
-) -> int:
-    motion_state = cloud_motion_state_for_node(node)
-    cluster_key = cluster_seed(node)
-    phase = shape_phase_index(atlas, frame, cluster_key * 5)
-    group = cluster_key % atlas.group_count
-    candidate = atlas.cloud_shape(group, phase) - 1
-    if runtime is None:
-        return candidate
-    return runtime.pose_level(cluster_key, candidate, frame, int(motion_state), size_class)
 
 
 def cloud_bank_offset(
@@ -199,40 +130,6 @@ def amplitude_for_node(atlas: WeatherMotionAtlas, node: CloudNode) -> int:
 
 def clamp_level(value: float) -> int:
     return max(0, min(config.MOTION_AMPLITUDE_LEVELS - 1, int(value * 15.999)))
-
-
-def stateless_cluster_offset(raw_x: int, raw_y: int) -> tuple[int, int]:
-    return (
-        hysteresis_step(
-            0,
-            raw_x,
-            config.CLOUD_CLUSTER_ENTER_THRESHOLD,
-            config.CLOUD_CLUSTER_EXIT_THRESHOLD,
-        ),
-        hysteresis_step(
-            0,
-            raw_y,
-            config.CLOUD_CLUSTER_ENTER_THRESHOLD,
-            config.CLOUD_CLUSTER_EXIT_THRESHOLD,
-        ),
-    )
-
-
-def stateless_local_offset(raw_x: int, raw_y: int) -> tuple[int, int]:
-    return (
-        hysteresis_step(
-            0,
-            raw_x,
-            config.CLOUD_LOCAL_ENTER_THRESHOLD,
-            config.CLOUD_LOCAL_EXIT_THRESHOLD,
-        ),
-        hysteresis_step(
-            0,
-            raw_y,
-            config.CLOUD_LOCAL_ENTER_THRESHOLD,
-            config.CLOUD_LOCAL_EXIT_THRESHOLD,
-        ),
-    )
 
 
 def clamp_motion_offset(value: float) -> float:

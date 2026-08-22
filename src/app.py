@@ -474,6 +474,20 @@ class MokumokuApp:
         pyxel.text(8, 60, f"selected {selected_text}", config.COLOR_UI)
         pyxel.text(8, 70, f"mature {mature} pruning {pruning}", config.COLOR_UI)
         pyxel.text(8, 80, f"retain {average_retention:.2f}", config.COLOR_UI)
+        pyxel.text(
+            8,
+            90,
+            f"quiet {int(config.QUIET_CLOUD_MOTION_ENABLED)} "
+            f"local {int(config.AMBIENT_LOCAL_POSITION_ENABLED)} "
+            f"size {int(config.AMBIENT_SIZE_PULSE_ENABLED)}",
+            config.COLOR_UI,
+        )
+        pyxel.text(
+            8,
+            100,
+            f"cluster offset {int(config.ENABLE_CLUSTER_AMBIENT_OFFSET)}",
+            config.COLOR_UI,
+        )
 
 
 def run(seed: int = 12345, headless: bool = False, smoke_frames: int | None = None) -> None:

@@ -87,103 +87,25 @@ class MotionAtlasTests(unittest.TestCase):
         current = hysteresis_step(current, 40, 91, 48)
         self.assertEqual(current, 0)
 
-    def test_motion_runtime_gates_offset_changes_by_state_and_size(self) -> None:
+    def test_quiet_cloud_render_offset_disables_ambient_position_and_size_pulse(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=12345)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        node = simulation.state.nodes[result.node_id]
         runtime = WeatherMotionRuntime()
-        active_small_interval = config.CLOUD_CLUSTER_X_INTERVAL_FRAMES[
-            int(CloudMotionState.ACTIVE)
-        ][0]
-        active_large_interval = config.CLOUD_CLUSTER_X_INTERVAL_FRAMES[
-            int(CloudMotionState.ACTIVE)
-        ][-1]
 
-        self.assertLess(active_large_interval, active_small_interval)
-        self.assertEqual(
-            runtime.cluster_offset(1, 100, 0, 0, int(CloudMotionState.ACTIVE), "s"),
-            (1, 0),
-        )
-        self.assertEqual(
-            runtime.cluster_offset(
-                1,
-                0,
-                0,
-                active_small_interval - 1,
-                int(CloudMotionState.ACTIVE),
-                "s",
-            ),
-            (1, 0),
-        )
-        self.assertEqual(
-            runtime.cluster_offset(
-                1,
-                0,
-                0,
-                active_small_interval,
-                int(CloudMotionState.ACTIVE),
-                "s",
-            ),
-            (0, 0),
-        )
+        offsets = [
+            cloud_render_offset(node, simulation.state, atlas, frame, runtime)
+            for frame in range(0, int(config.CLOUD_MOTION_PERIOD_SECONDS * config.FPS), 30)
+        ]
 
-        mature_interval = config.CLOUD_CLUSTER_X_INTERVAL_FRAMES[
-            int(CloudMotionState.MATURE)
-        ][0]
-        self.assertGreater(mature_interval, active_small_interval)
-
-    def test_local_motion_runtime_is_even_more_sparse_for_small_nodes(self) -> None:
-        runtime = WeatherMotionRuntime()
-        local_interval = config.CLOUD_LOCAL_X_INTERVAL_FRAMES[int(CloudMotionState.ACTIVE)][0]
-        cluster_interval = config.CLOUD_CLUSTER_X_INTERVAL_FRAMES[
-            int(CloudMotionState.ACTIVE)
-        ][0]
-
-        self.assertGreater(local_interval, cluster_interval)
-        self.assertEqual(
-            runtime.local_offset(1, 100, 0, 0, int(CloudMotionState.ACTIVE), "s"),
-            (1, 0),
-        )
-        self.assertEqual(
-            runtime.local_offset(
-                1,
-                0,
-                0,
-                local_interval - 1,
-                int(CloudMotionState.ACTIVE),
-                "s",
-            ),
-            (1, 0),
-        )
-        self.assertEqual(
-            runtime.local_offset(
-                1,
-                0,
-                0,
-                local_interval,
-                int(CloudMotionState.ACTIVE),
-                "s",
-            ),
-            (0, 0),
-        )
-
-    def test_pose_runtime_moves_one_level_at_a_time(self) -> None:
-        runtime = WeatherMotionRuntime()
-        interval = config.CLOUD_NODE_POSE_INTERVAL_FRAMES[int(CloudMotionState.ACTIVE)][0]
-
-        self.assertEqual(
-            runtime.pose_level(1, -1, 0, int(CloudMotionState.ACTIVE), "s"),
-            -1,
-        )
-        self.assertEqual(
-            runtime.pose_level(1, 1, interval - 1, int(CloudMotionState.ACTIVE), "s"),
-            -1,
-        )
-        self.assertEqual(
-            runtime.pose_level(1, 1, interval, int(CloudMotionState.ACTIVE), "s"),
-            0,
-        )
-        self.assertEqual(
-            runtime.pose_level(1, 1, interval * 2, int(CloudMotionState.ACTIVE), "s"),
-            1,
-        )
+        self.assertTrue(config.QUIET_CLOUD_MOTION_ENABLED)
+        self.assertFalse(config.AMBIENT_LOCAL_POSITION_ENABLED)
+        self.assertFalse(config.AMBIENT_SIZE_PULSE_ENABLED)
+        self.assertFalse(config.ENABLE_CLUSTER_AMBIENT_OFFSET)
+        self.assertEqual(set(offsets), {(0.0, 0.0, 1.0)})
 
     def test_growth_runtime_reports_only_triggered_event_window(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=123)
@@ -262,7 +184,7 @@ class MotionAtlasTests(unittest.TestCase):
         node.incubation = 0.8
         self.assertEqual(cloud_motion_state_for_node(node), CloudMotionState.MATURE)
 
-    def test_cloud_render_offset_uses_lut_without_adjacent_frame_jitter(self) -> None:
+    def test_cloud_render_offset_stays_zero_through_quiet_ambient(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=12345)
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)
@@ -277,14 +199,8 @@ class MotionAtlasTests(unittest.TestCase):
             cloud_render_offset(node, simulation.state, atlas, frame, runtime)
             for frame in range(int(config.CLOUD_MOTION_PERIOD_SECONDS * config.FPS))
         ]
-        early = offsets[0]
-        adjacent = offsets[1]
-        unique_positions = {(round(offset[0], 2), round(offset[1], 2)) for offset in offsets}
 
-        self.assertEqual(adjacent, early)
-        self.assertTrue(all(abs(offset[0]) <= 1.0 for offset in offsets))
-        self.assertTrue(all(abs(offset[1]) <= 1.0 for offset in offsets))
-        self.assertGreaterEqual(len(unique_positions), 2)
+        self.assertEqual(set(offsets), {(0.0, 0.0, 1.0)})
 
         node.incubation = 0.9
         mature_runtime = WeatherMotionRuntime()
@@ -292,8 +208,7 @@ class MotionAtlasTests(unittest.TestCase):
             cloud_render_offset(node, simulation.state, atlas, frame, mature_runtime)
             for frame in range(0, int(config.CLOUD_MOTION_PERIOD_SECONDS * config.FPS), 30)
         ]
-        self.assertTrue(all(abs(offset[0]) <= 1.0 for offset in mature_offsets))
-        self.assertTrue(all(abs(offset[1]) <= 1.0 for offset in mature_offsets))
+        self.assertEqual(set(mature_offsets), {(0.0, 0.0, 1.0)})
 
 
 if __name__ == "__main__":

@@ -289,113 +289,16 @@ class AssetsRenderingWebTests(unittest.TestCase):
             )
         )
 
-    def test_motion_atlas_node_offsets_are_visible_but_not_adjacent_frame_jitter(self) -> None:
+    def test_motion_atlas_does_not_move_node_centers_in_quiet_ambient(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=12345)
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)
         result = simulation.tap_screen(160.0, 190.0, camera)
         self.assertIsNotNone(result.node_id)
         runtime = WeatherMotionRuntime()
-        first_items = collect_cloud_render_items(
-            simulation.state,
-            camera,
-            frame=30,
-            motion_atlas=atlas,
-            motion_runtime=runtime,
-        )
-        second_items = collect_cloud_render_items(
-            simulation.state,
-            camera,
-            frame=31,
-            motion_atlas=atlas,
-            motion_runtime=runtime,
-        )
-        later_items = collect_cloud_render_items(
-            simulation.state,
-            camera,
-            frame=int(config.CLOUD_MOTION_PERIOD_SECONDS * config.FPS * 0.5),
-            motion_atlas=atlas,
-            motion_runtime=runtime,
-        )
-        first = next(item.payload for item in first_items if isinstance(item.payload, NodePayload))
-        second = next(
-            item.payload for item in second_items if isinstance(item.payload, NodePayload)
-        )
-        later = next(item.payload for item in later_items if isinstance(item.payload, NodePayload))
 
-        self.assertEqual((second.offset_x, second.offset_y), (first.offset_x, first.offset_y))
-        self.assertLessEqual(abs(later.offset_x), 1.0)
-        self.assertLessEqual(abs(later.offset_y), 1.0)
-        self.assertNotEqual(
-            (round(first.offset_x, 2), round(first.offset_y, 2)),
-            (round(later.offset_x, 2), round(later.offset_y, 2)),
-        )
-
-    def test_motion_atlas_shape_level_changes_without_position_jitter(self) -> None:
-        atlas = WeatherMotionAtlas.build(seed=12345)
-        simulation = CloudSimulation(RandomSource(12345))
-        camera = build_camera_basis(0.0)
-        result = simulation.tap_screen(160.0, 190.0, camera)
-        self.assertIsNotNone(result.node_id)
-        runtime = WeatherMotionRuntime()
-        first_items = collect_cloud_render_items(
-            simulation.state,
-            camera,
-            frame=30,
-            motion_atlas=atlas,
-            motion_runtime=runtime,
-        )
-        second_items = collect_cloud_render_items(
-            simulation.state,
-            camera,
-            frame=31,
-            motion_atlas=atlas,
-            motion_runtime=runtime,
-        )
-        shape_items = [
-            collect_cloud_render_items(
-                simulation.state,
-                camera,
-                frame=frame,
-                motion_atlas=atlas,
-                motion_runtime=runtime,
-            )
-            for frame in range(0, int(config.CLOUD_SHAPE_PERIOD_SECONDS * config.FPS), config.FPS)
-        ]
-        first = next(item.payload for item in first_items if isinstance(item.payload, NodePayload))
-        second = next(
-            item.payload for item in second_items if isinstance(item.payload, NodePayload)
-        )
-        shape_levels = {
-            next(
-                item.payload for item in items if isinstance(item.payload, NodePayload)
-            ).shape_level
-            for items in shape_items
-        }
-
-        self.assertEqual((second.offset_x, second.offset_y), (first.offset_x, first.offset_y))
-        self.assertGreaterEqual(len(shape_levels), 2)
-        self.assertTrue(all(0 <= level < config.CLOUD_SHAPE_LEVELS for level in shape_levels))
-
-    def test_active_connected_nodes_use_slow_shared_pose_offset(self) -> None:
-        atlas = WeatherMotionAtlas.build(seed=12345)
-        simulation = CloudSimulation(RandomSource(12345))
-        camera = build_camera_basis(0.0)
-        result = simulation.tap_screen(160.0, 190.0, camera)
-        self.assertIsNotNone(result.node_id)
-        parent = simulation.state.nodes[result.node_id]
-        projection = project_point(parent.position, camera)
-        child = simulation.tap_screen(projection.screen_x + 30.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
-
-        runtime = WeatherMotionRuntime()
-        relative_offsets: set[tuple[float, float]] = set()
-        pose_levels: set[int] = set()
-        for frame in range(
-            0,
-            int(config.CLOUD_SHAPE_PERIOD_SECONDS * config.FPS * 2),
-            config.FPS,
-        ):
+        payloads = []
+        for frame in range(0, config.FPS * 30, config.FPS):
             items = collect_cloud_render_items(
                 simulation.state,
                 camera,
@@ -403,24 +306,38 @@ class AssetsRenderingWebTests(unittest.TestCase):
                 motion_atlas=atlas,
                 motion_runtime=runtime,
             )
-            payloads = {
-                item.payload.node.id: item.payload
-                for item in items
-                if isinstance(item.payload, NodePayload)
-            }
-            parent_payload = payloads[result.node_id]
-            child_payload = payloads[child.node_id]
-            self.assertEqual(parent_payload.pose_level, child_payload.pose_level)
-            pose_levels.add(parent_payload.pose_level)
-            relative_offsets.add(
-                (
-                    child_payload.offset_x - parent_payload.offset_x,
-                    child_payload.offset_y - parent_payload.offset_y,
-                )
+            payloads.append(
+                next(item.payload for item in items if isinstance(item.payload, NodePayload))
             )
 
-        self.assertGreaterEqual(len(pose_levels), 2)
-        self.assertGreaterEqual(len(relative_offsets), 2)
+        self.assertEqual(
+            {(payload.offset_x, payload.offset_y) for payload in payloads},
+            {(0.0, 0.0)},
+        )
+
+    def test_motion_atlas_does_not_change_size_or_shape_in_quiet_ambient(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=12345)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        runtime = WeatherMotionRuntime()
+
+        payloads = []
+        for frame in range(0, config.FPS * 30, config.FPS):
+            items = collect_cloud_render_items(
+                simulation.state,
+                camera,
+                frame=frame,
+                motion_atlas=atlas,
+                motion_runtime=runtime,
+            )
+            payloads.append(
+                next(item.payload for item in items if isinstance(item.payload, NodePayload))
+            )
+
+        self.assertEqual({payload.sprite for payload in payloads}, {payloads[0].sprite})
+        self.assertEqual({payload.shape_level for payload in payloads}, {0})
 
     def test_growth_event_level_is_added_to_node_payload(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=12345)

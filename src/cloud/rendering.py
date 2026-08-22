@@ -15,7 +15,7 @@ from src.camera.projection import ProjectedPoint, project_point
 from src.cloud.model import CloudEdge, CloudNode, CloudState
 from src.enums import EdgeKind
 from src.motion.atlas import WeatherMotionAtlas
-from src.motion.cloud_motion import cloud_cluster_pose_level, cloud_render_offset, cloud_shape_level
+from src.motion.cloud_motion import cloud_render_offset
 from src.motion.runtime import WeatherMotionRuntime
 
 
@@ -42,7 +42,6 @@ class NodePayload:
     offset_y: float = 0.0
     mesh_intensity: float = 0.0
     mesh_phase: float = 0.0
-    pose_level: int = 0
     shape_level: int = 0
     growth_level: int = 0
 
@@ -103,7 +102,6 @@ def collect_cloud_render_items(
         size_class = size_class_for_screen_radius(screen_radius)
         if motion_atlas is None:
             offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
-            pose_level = 0
             shape_level = 0
             growth_level = 0
         else:
@@ -115,23 +113,7 @@ def collect_cloud_render_items(
                 motion_runtime,
                 size_class,
             )
-            pose_level = cloud_cluster_pose_level(
-                node,
-                motion_atlas,
-                frame,
-                motion_runtime,
-                size_class,
-            )
-            pose_offset_x, pose_offset_y = cloud_node_pose_offset(
-                node,
-                state,
-                camera,
-                projection,
-                pose_level,
-            )
-            offset_x += pose_offset_x
-            offset_y += pose_offset_y
-            shape_level = cloud_shape_level(node, motion_atlas, frame)
+            shape_level = 0
             if motion_runtime is None:
                 growth_level = 0
             else:
@@ -159,7 +141,6 @@ def collect_cloud_render_items(
                     offset_y,
                     mesh_intensity,
                     mesh_phase,
-                    pose_level,
                     shape_level,
                     growth_level,
                 ),
@@ -221,47 +202,6 @@ def cloud_bridge_payloads(
         )
         payloads.append(BridgePayload(edge, projection, sprite))
     return payloads
-
-
-def cloud_node_pose_offset(
-    node: CloudNode,
-    state: CloudState,
-    camera: CameraBasis,
-    projection: ProjectedPoint,
-    pose_level: int,
-) -> tuple[int, int]:
-    if pose_level == 0:
-        return 0, 0
-    cluster = state.clusters.get(node.cluster_id)
-    if cluster is None or len(cluster.node_ids) < 2:
-        return 0, 0
-    center = project_point(cluster.centroid, camera)
-    if not center.visible:
-        return 0, 0
-
-    dx = projection.screen_x - center.screen_x
-    dy = projection.screen_y - center.screen_y
-    if abs(dx) < 1.0 and abs(dy) < 1.0:
-        return 0, 0
-
-    limit = config.CLOUD_NODE_POSE_MAX_OFFSET_PX
-    offset_x = sign(dx) * pose_level if abs(dx) >= 3.0 else 0
-    offset_y = sign(dy) * pose_level if abs(dy) >= 3.0 else 0
-    if offset_x == 0 and offset_y == 0:
-        if abs(dx) >= abs(dy):
-            offset_x = sign(dx) * pose_level
-        else:
-            offset_y = sign(dy) * pose_level
-    return (
-        max(-limit, min(limit, offset_x)),
-        max(-limit, min(limit, offset_y)),
-    )
-
-
-def sign(value: float) -> int:
-    if value < 0.0:
-        return -1
-    return 1
 
 
 def cloud_node_wobble(
