@@ -87,6 +87,83 @@ class MotionAtlasTests(unittest.TestCase):
         current = hysteresis_step(current, 40, 91, 48)
         self.assertEqual(current, 0)
 
+    def test_motion_runtime_gates_offset_changes_by_state_and_size(self) -> None:
+        runtime = WeatherMotionRuntime()
+        active_small_interval = config.CLOUD_CLUSTER_X_INTERVAL_FRAMES[
+            int(CloudMotionState.ACTIVE)
+        ][0]
+        active_large_interval = config.CLOUD_CLUSTER_X_INTERVAL_FRAMES[
+            int(CloudMotionState.ACTIVE)
+        ][-1]
+
+        self.assertLess(active_large_interval, active_small_interval)
+        self.assertEqual(
+            runtime.cluster_offset(1, 100, 0, 0, int(CloudMotionState.ACTIVE), "s"),
+            (1, 0),
+        )
+        self.assertEqual(
+            runtime.cluster_offset(
+                1,
+                0,
+                0,
+                active_small_interval - 1,
+                int(CloudMotionState.ACTIVE),
+                "s",
+            ),
+            (1, 0),
+        )
+        self.assertEqual(
+            runtime.cluster_offset(
+                1,
+                0,
+                0,
+                active_small_interval,
+                int(CloudMotionState.ACTIVE),
+                "s",
+            ),
+            (0, 0),
+        )
+
+        mature_interval = config.CLOUD_CLUSTER_X_INTERVAL_FRAMES[
+            int(CloudMotionState.MATURE)
+        ][0]
+        self.assertGreater(mature_interval, active_small_interval)
+
+    def test_local_motion_runtime_is_even_more_sparse_for_small_nodes(self) -> None:
+        runtime = WeatherMotionRuntime()
+        local_interval = config.CLOUD_LOCAL_X_INTERVAL_FRAMES[int(CloudMotionState.ACTIVE)][0]
+        cluster_interval = config.CLOUD_CLUSTER_X_INTERVAL_FRAMES[
+            int(CloudMotionState.ACTIVE)
+        ][0]
+
+        self.assertGreater(local_interval, cluster_interval)
+        self.assertEqual(
+            runtime.local_offset(1, 100, 0, 0, int(CloudMotionState.ACTIVE), "s"),
+            (1, 0),
+        )
+        self.assertEqual(
+            runtime.local_offset(
+                1,
+                0,
+                0,
+                local_interval - 1,
+                int(CloudMotionState.ACTIVE),
+                "s",
+            ),
+            (1, 0),
+        )
+        self.assertEqual(
+            runtime.local_offset(
+                1,
+                0,
+                0,
+                local_interval,
+                int(CloudMotionState.ACTIVE),
+                "s",
+            ),
+            (0, 0),
+        )
+
     def test_growth_runtime_reports_only_triggered_event_window(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=123)
         runtime = WeatherMotionRuntime()

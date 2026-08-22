@@ -98,6 +98,8 @@ def collect_cloud_render_items(
         projection = project_point(node.position, camera)
         if not projection.visible:
             continue
+        screen_radius = node.radius * projection.scale
+        size_class = size_class_for_screen_radius(screen_radius)
         if motion_atlas is None:
             offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
             shape_level = 0
@@ -109,6 +111,7 @@ def collect_cloud_render_items(
                 motion_atlas,
                 frame,
                 motion_runtime,
+                size_class,
             )
             shape_level = cloud_shape_level(node, motion_atlas, frame)
             if motion_runtime is None:
@@ -119,7 +122,6 @@ def collect_cloud_render_items(
                     frame,
                     motion_atlas.cloud_growth_ease,
                 )
-        screen_radius = node.radius * projection.scale
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
         mesh_phase = single_node_mesh_phase(node, frame)
         sprite = cloud_sprite_rect(

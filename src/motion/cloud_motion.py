@@ -28,6 +28,7 @@ def cloud_render_offset(
     atlas: WeatherMotionAtlas,
     frame: int,
     runtime: WeatherMotionRuntime | None = None,
+    size_class: str = "m",
 ) -> tuple[float, float, float]:
     if node.id not in state.nodes:
         return 0.0, 0.0, 1.0
@@ -59,18 +60,27 @@ def cloud_render_offset(
     if runtime is None:
         cluster_dx, cluster_dy = stateless_cluster_offset(cluster_raw_x, cluster_raw_y)
     else:
-        cluster_dx, cluster_dy = runtime.cluster_offset(cluster_key, cluster_raw_x, cluster_raw_y)
+        cluster_dx, cluster_dy = runtime.cluster_offset(
+            cluster_key,
+            cluster_raw_x,
+            cluster_raw_y,
+            frame,
+            int(motion_state),
+            size_class,
+        )
 
-    local_dx = 0
-    local_dy = 0
-    if motion_state is CloudMotionState.ACTIVE:
-        if runtime is None:
-            local_dx, local_dy = stateless_local_offset(local_raw_x, local_raw_y)
-        else:
-            local_dx, local_dy = runtime.local_offset(node.id, local_raw_x, local_raw_y)
+    if motion_state is CloudMotionState.ACTIVE and runtime is not None:
+        runtime.local_offset(
+            node.id,
+            local_raw_x,
+            local_raw_y,
+            frame,
+            int(motion_state),
+            size_class,
+        )
 
-    dx = clamp_motion_offset(cluster_dx + local_dx * local_weight)
-    dy = clamp_motion_offset(cluster_dy + local_dy * local_weight)
+    dx = clamp_motion_offset(float(cluster_dx))
+    dy = clamp_motion_offset(float(cluster_dy))
     pulse = (cluster_pulse * (1.0 - local_weight) + local_pulse * local_weight) / 15.0
     radius_ratio = 1.0 + (pulse - 0.5) * 0.02
 
