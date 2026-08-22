@@ -11,6 +11,7 @@ from src.motion.cloud_motion import (
     CloudMotionState,
     cloud_motion_state_for_node,
     cloud_render_offset,
+    cloud_shape_level,
 )
 from src.motion.quantize import unpack_signed
 from src.motion.runtime import WeatherMotionRuntime, hysteresis_step
@@ -27,6 +28,8 @@ class MotionAtlasTests(unittest.TestCase):
         self.assertEqual(len(atlas.cloud_active_dx), expected)
         self.assertEqual(len(atlas.cloud_settling_dx), expected)
         self.assertEqual(len(atlas.cloud_mature_dx), expected)
+        self.assertEqual(len(atlas.cloud_shape_level), expected)
+        self.assertEqual(len(atlas.cloud_growth_ease), config.CLOUD_GROWTH_EASE_FRAMES)
         self.assertTrue(
             all(-127 <= unpack_signed(value) <= 127 for value in atlas.cloud_active_dx)
         )
@@ -34,6 +37,32 @@ class MotionAtlasTests(unittest.TestCase):
             all(-127 <= unpack_signed(value) <= 127 for value in atlas.cloud_settling_dx)
         )
         self.assertTrue(all(0 <= value <= 15 for value in atlas.cloud_active_pulse))
+        self.assertTrue(
+            all(0 <= value < config.CLOUD_SHAPE_LEVELS for value in atlas.cloud_shape_level)
+        )
+
+    def test_cloud_shape_bank_changes_on_a_slow_cycle(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=123)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        node = simulation.state.nodes[result.node_id]
+
+        frames = range(0, int(config.CLOUD_SHAPE_PERIOD_SECONDS * config.FPS), config.FPS)
+        levels = {cloud_shape_level(node, atlas, frame) for frame in frames}
+
+        self.assertGreaterEqual(len(levels), 2)
+        self.assertTrue(all(0 <= level < config.CLOUD_SHAPE_LEVELS for level in levels))
+
+    def test_cloud_growth_ease_is_event_shaped(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=1)
+        ease = atlas.cloud_growth_ease
+
+        self.assertEqual(ease[0], 0)
+        self.assertEqual(ease[config.CLOUD_GROWTH_PEAK_FRAME], 10)
+        self.assertGreater(ease[config.CLOUD_GROWTH_SETTLE_FRAME], 0)
+        self.assertEqual(ease[-1], 0)
 
     def test_cloud_motion_bank_is_low_passed_before_quantization(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=123)
@@ -57,6 +86,29 @@ class MotionAtlasTests(unittest.TestCase):
         self.assertEqual(current, 1)
         current = hysteresis_step(current, 40, 91, 48)
         self.assertEqual(current, 0)
+
+    def test_growth_runtime_reports_only_triggered_event_window(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=123)
+        runtime = WeatherMotionRuntime()
+
+        self.assertEqual(runtime.growth_level(7, 99, atlas.cloud_growth_ease), 0)
+
+        runtime.trigger_growth(7, 100)
+
+        self.assertEqual(runtime.growth_level(7, 99, atlas.cloud_growth_ease), 0)
+        self.assertEqual(runtime.growth_level(7, 100, atlas.cloud_growth_ease), 0)
+        self.assertEqual(
+            runtime.growth_level(
+                7,
+                100 + config.CLOUD_GROWTH_PEAK_FRAME,
+                atlas.cloud_growth_ease,
+            ),
+            10,
+        )
+        self.assertEqual(
+            runtime.growth_level(7, 100 + len(atlas.cloud_growth_ease), atlas.cloud_growth_ease),
+            0,
+        )
 
     def test_weather_motion_atlas_is_deterministic_by_seed(self) -> None:
         first = WeatherMotionAtlas.build(seed=777)

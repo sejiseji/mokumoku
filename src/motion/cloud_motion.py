@@ -77,6 +77,19 @@ def cloud_render_offset(
     return dx, dy, radius_ratio
 
 
+def cloud_shape_level(node: CloudNode, atlas: WeatherMotionAtlas, frame: int) -> int:
+    motion_state = cloud_motion_state_for_node(node)
+    node_phase = shape_phase_index(atlas, frame, (node.sprite_seed * 97) & 0x7FFFFFFF)
+    cluster_phase = shape_phase_index(atlas, frame, cluster_seed(node) * 3)
+    sync_level = sync_level_for_node(node, motion_state)
+    effective_phase = lerp_phase(node_phase, cluster_phase, sync_level, atlas.phase_count)
+    if motion_state is CloudMotionState.ACTIVE:
+        group = node.sprite_seed % atlas.group_count
+    else:
+        group = cluster_seed(node) % atlas.group_count
+    return atlas.cloud_shape(group, effective_phase)
+
+
 def cloud_bank_offset(
     atlas: WeatherMotionAtlas,
     motion_state: CloudMotionState,
@@ -91,7 +104,30 @@ def cloud_bank_offset(
 
 
 def phase_index(atlas: WeatherMotionAtlas, frame: int, phase_offset: int) -> int:
-    period_frames = max(1, int(config.CLOUD_MOTION_PERIOD_SECONDS * config.FPS))
+    return period_phase_index(
+        atlas,
+        frame,
+        phase_offset,
+        config.CLOUD_MOTION_PERIOD_SECONDS,
+    )
+
+
+def shape_phase_index(atlas: WeatherMotionAtlas, frame: int, phase_offset: int) -> int:
+    return period_phase_index(
+        atlas,
+        frame,
+        phase_offset,
+        config.CLOUD_SHAPE_PERIOD_SECONDS,
+    )
+
+
+def period_phase_index(
+    atlas: WeatherMotionAtlas,
+    frame: int,
+    phase_offset: int,
+    period_seconds: float,
+) -> int:
+    period_frames = max(1, int(period_seconds * config.FPS))
     motion_phase = (frame * atlas.phase_count) // period_frames
     if atlas.phase_count & (atlas.phase_count - 1) == 0:
         return (motion_phase + phase_offset) & (atlas.phase_count - 1)

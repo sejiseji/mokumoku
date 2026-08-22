@@ -15,7 +15,7 @@ from src.camera.projection import ProjectedPoint, project_point
 from src.cloud.model import CloudEdge, CloudNode, CloudState
 from src.enums import EdgeKind
 from src.motion.atlas import WeatherMotionAtlas
-from src.motion.cloud_motion import cloud_render_offset
+from src.motion.cloud_motion import cloud_render_offset, cloud_shape_level
 from src.motion.runtime import WeatherMotionRuntime
 
 
@@ -42,6 +42,8 @@ class NodePayload:
     offset_y: float = 0.0
     mesh_intensity: float = 0.0
     mesh_phase: float = 0.0
+    shape_level: int = 0
+    growth_level: int = 0
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,8 @@ def collect_cloud_render_items(
             continue
         if motion_atlas is None:
             offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
+            shape_level = 0
+            growth_level = 0
         else:
             offset_x, offset_y, _radius_ratio = cloud_render_offset(
                 node,
@@ -106,6 +110,15 @@ def collect_cloud_render_items(
                 frame,
                 motion_runtime,
             )
+            shape_level = cloud_shape_level(node, motion_atlas, frame)
+            if motion_runtime is None:
+                growth_level = 0
+            else:
+                growth_level = motion_runtime.growth_level(
+                    node.id,
+                    frame,
+                    motion_atlas.cloud_growth_ease,
+                )
         screen_radius = node.radius * projection.scale
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
         mesh_phase = single_node_mesh_phase(node, frame)
@@ -126,6 +139,8 @@ def collect_cloud_render_items(
                     offset_y,
                     mesh_intensity,
                     mesh_phase,
+                    shape_level,
+                    growth_level,
                 ),
             )
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from random import Random
 
@@ -51,6 +52,8 @@ class WeatherMotionAtlas:
     cloud_mature_dx: bytearray
     cloud_mature_dy: bytearray
     cloud_mature_pulse: bytearray
+    cloud_shape_level: bytearray
+    cloud_growth_ease: bytes
     rain_sway: bytearray
     rain_length: bytearray
     rain_density: bytearray
@@ -80,6 +83,8 @@ class WeatherMotionAtlas:
             cloud_mature_dy,
             cloud_mature_pulse,
         ) = build_cloud_banks(phase_count, group_count, seed)
+        cloud_shape_level = build_cloud_shape_bank(phase_count, group_count, seed)
+        cloud_growth_ease = build_cloud_growth_ease()
 
         rain_sway, rain_length, rain_density = build_rain_band_banks(seed)
         return cls(
@@ -95,6 +100,8 @@ class WeatherMotionAtlas:
             cloud_mature_dx=cloud_mature_dx,
             cloud_mature_dy=cloud_mature_dy,
             cloud_mature_pulse=cloud_mature_pulse,
+            cloud_shape_level=cloud_shape_level,
+            cloud_growth_ease=cloud_growth_ease,
             rain_sway=rain_sway,
             rain_length=rain_length,
             rain_density=rain_density,
@@ -126,6 +133,9 @@ class WeatherMotionAtlas:
             unpack_signed(self.cloud_mature_dy[index]),
             self.cloud_mature_pulse[index],
         )
+
+    def cloud_shape(self, group: int, phase: int) -> int:
+        return self.cloud_shape_level[self.index(group, phase)]
 
     def index(self, group: int, phase: int) -> int:
         return (group % self.group_count) * self.phase_count + (phase % self.phase_count)
@@ -188,6 +198,61 @@ def build_cloud_banks(
         mature_dy,
         mature_pulse,
     )
+
+
+def build_cloud_shape_bank(phase_count: int, group_count: int, seed: int) -> bytearray:
+    shape = bytearray()
+    for group in range(group_count):
+        sample_index = seed * 211 + group * 31 + 11
+        raw_values: list[float] = []
+        phase_shift = (sample_index % 997) / 997.0 * math.tau
+        for phase in range(phase_count):
+            phase01 = phase / phase_count
+            _x, _y, pulse = sample_weather_motion(sample_index, group + 9, phase01)
+            slow_breath = 0.5 + 0.5 * math.sin(math.tau * phase01 + phase_shift)
+            pulse01 = max(0.0, min(1.0, (pulse - 0.68) / (1.50 - 0.68)))
+            organic = slow_breath * 0.72 + pulse01 * 0.28
+            raw_values.append(max(0.0, min(1.0, organic)))
+
+        smooth_values = smooth_periodic(raw_values, config.CLOUD_SHAPE_SMOOTH_RADIUS)
+        for value in smooth_values:
+            if value >= 0.66:
+                shape.append(2)
+            elif value >= 0.34:
+                shape.append(1)
+            else:
+                shape.append(0)
+    return shape
+
+
+def build_cloud_growth_ease() -> bytes:
+    levels = bytearray()
+    peak_frame = max(1, config.CLOUD_GROWTH_PEAK_FRAME)
+    settle_frame = max(peak_frame + 1, config.CLOUD_GROWTH_SETTLE_FRAME)
+    final_frame = max(settle_frame + 1, config.CLOUD_GROWTH_EASE_FRAMES - 1)
+    for frame in range(config.CLOUD_GROWTH_EASE_FRAMES):
+        if frame <= peak_frame:
+            t = frame / peak_frame
+            value = 10.0 * ease_out_sine(t)
+        elif frame <= settle_frame:
+            t = (frame - peak_frame) / (settle_frame - peak_frame)
+            value = 10.0 - 3.0 * smoothstep(t)
+        else:
+            t = (frame - settle_frame) / (final_frame - settle_frame)
+            value = 7.0 * (1.0 - smoothstep(t))
+        levels.append(clamp_int(int(round(value)), 0, 10))
+    levels[0] = 0
+    levels[-1] = 0
+    return bytes(levels)
+
+
+def ease_out_sine(value: float) -> float:
+    return math.sin(max(0.0, min(1.0, value)) * math.pi * 0.5)
+
+
+def smoothstep(value: float) -> float:
+    value = max(0.0, min(1.0, value))
+    return value * value * (3.0 - 2.0 * value)
 
 
 def smooth_periodic(values: list[float], radius: int) -> list[float]:

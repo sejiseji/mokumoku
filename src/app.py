@@ -15,7 +15,7 @@ from src.cloud.rendering import (
     NodePayload,
     collect_cloud_render_items,
 )
-from src.cloud.simulation import CloudSimulation
+from src.cloud.simulation import CloudOperationResult, CloudSimulation
 from src.motion.atlas import WeatherMotionAtlas
 from src.motion.runtime import WeatherMotionRuntime
 from src.rng import RandomSource
@@ -204,6 +204,8 @@ class MokumokuApp:
 
         if pressed and pointer.selected_node_id is not None:
             if distance >= config.DRAG_START_DISTANCE:
+                if not pointer.dragging:
+                    self.motion_runtime.trigger_growth(pointer.selected_node_id, self.state.frame)
                 pointer.dragging = True
                 self.cloud.drag_node_to_screen(pointer.selected_node_id, x, y, camera)
             elif (
@@ -211,7 +213,8 @@ class MokumokuApp:
                 and distance <= config.PRESS_SLOP_PX
                 and not pointer.long_press_sent
             ):
-                self.cloud.long_press_node(pointer.selected_node_id)
+                result = self.cloud.long_press_node(pointer.selected_node_id)
+                self.trigger_operation_growth(result)
                 pointer.long_press_sent = True
 
         if just_released:
@@ -235,11 +238,16 @@ class MokumokuApp:
         ):
             velocity = camera.right * ((x - pointer.start_x) / max(duration, 0.001))
             velocity -= camera.up * ((y - pointer.start_y) / max(duration, 0.001))
-            self.cloud.flick_node(pointer.selected_node_id, velocity)
+            result = self.cloud.flick_node(pointer.selected_node_id, velocity)
+            self.trigger_operation_growth(result)
         elif not pointer.dragging and not pointer.long_press_sent:
-            self.cloud.tap_screen(x, y, camera)
+            result = self.cloud.tap_screen(x, y, camera)
+            self.trigger_operation_growth(result)
 
         self.pointer = None
+
+    def trigger_operation_growth(self, result: CloudOperationResult) -> None:
+        self.motion_runtime.trigger_growth(result.node_id, self.state.frame)
 
     def cancel_pointer(self) -> None:
         self.pointer = None
@@ -353,9 +361,44 @@ class MokumokuApp:
             )
             if payload.mesh_intensity > 0.0:
                 self.draw_single_cloud_mesh(payload, x, y)
+            self.draw_cloud_shape_overlay(payload, x, y)
         else:
             radius = max(2, int(node.radius * projection.scale * max(0.25, node.fade)))
             pyxel.circ(x, y, radius, 7)
+            self.draw_cloud_shape_overlay(payload, x, y)
+
+    def draw_cloud_shape_overlay(self, payload: NodePayload, x: int, y: int) -> None:
+        if payload.shape_level <= 0 and payload.growth_level <= 0:
+            return
+
+        pyxel = self.pyxel
+        sprite = payload.sprite
+        cx = x + sprite.width // 2
+        cy = y + sprite.height // 2
+        scale = sprite.width / 16.0
+
+        def unit(value: float) -> int:
+            return int(round(value * scale))
+
+        def puff(px: float, py: float, radius: float, color: int) -> None:
+            pyxel.circ(cx + unit(px), cy + unit(py), max(1, unit(radius)), color)
+
+        if payload.shape_level >= 1:
+            puff(-7.0, -1.5, 0.8, 7)
+            puff(6.0, 2.5, 0.7, 6)
+        if payload.shape_level >= 2:
+            puff(-2.0, -7.0, 0.8, 7)
+            puff(2.5, 6.5, 0.7, 6)
+
+        growth = payload.growth_level
+        if growth >= 2:
+            puff(-5.5, -4.5, 0.7, 7)
+        if growth >= 5:
+            puff(5.0, -4.5, 0.8, 7)
+        if growth >= 8:
+            puff(0.5, 7.0, 0.7, 6)
+        if growth >= 9:
+            pyxel.line(cx + unit(-3.0), cy + unit(-7.0), cx + unit(3.0), cy + unit(-7.0), 7)
 
     def draw_single_cloud_mesh(self, payload: NodePayload, x: int, y: int) -> None:
         pyxel = self.pyxel
