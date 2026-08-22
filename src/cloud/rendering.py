@@ -17,7 +17,7 @@ from src.cloud.model import CloudEdge, CloudNode, CloudState
 from src.enums import EdgeKind
 from src.motion.atlas import WeatherMotionAtlas
 from src.motion.cloud_motion import cloud_motion_state_for_node, cloud_render_offset, cluster_seed
-from src.motion.runtime import WeatherMotionRuntime
+from src.motion.runtime import TouchResponseKind, WeatherMotionRuntime
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,7 @@ class NodePayload:
     mesh_phase: float = 0.0
     shape_level: int = 0
     growth_level: int = 0
+    response_kind: TouchResponseKind | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,7 @@ def collect_cloud_render_items(
         if motion_atlas is None:
             offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
             growth_level = 0
+            response_kind = None
         else:
             offset_x, offset_y, _radius_ratio = cloud_render_offset(
                 node,
@@ -128,12 +130,14 @@ def collect_cloud_render_items(
             )
             if motion_runtime is None:
                 growth_level = 0
+                response_kind = None
             else:
                 growth_level = motion_runtime.growth_level(
                     node.id,
                     frame,
                     motion_atlas.cloud_growth_ease,
                 )
+                response_kind = motion_runtime.response_kind(node.id, frame)
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
         mesh_phase = single_node_mesh_phase(node, frame)
         family = choose_cloud_sprite_family(node, state, camera, projection)
@@ -158,6 +162,7 @@ def collect_cloud_render_items(
                     mesh_phase,
                     morph_variant,
                     growth_level,
+                    response_kind,
                 ),
             )
         )

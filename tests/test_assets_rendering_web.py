@@ -33,7 +33,7 @@ from src.cloud.simulation import CloudSimulation
 from src.enums import EdgeKind
 from src.math3d import Vec3
 from src.motion.atlas import WeatherMotionAtlas
-from src.motion.runtime import WeatherMotionRuntime
+from src.motion.runtime import TouchResponseKind, WeatherMotionRuntime
 from src.rng import RandomSource
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -467,7 +467,35 @@ class AssetsRenderingWebTests(unittest.TestCase):
         )
 
         self.assertEqual(peak.growth_level, config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[0])
+        self.assertEqual(peak.response_kind, TouchResponseKind.TAP)
         self.assertEqual(settled.growth_level, 0)
+        self.assertIsNone(settled.response_kind)
+
+    def test_input_response_kind_is_added_to_node_payload(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=12345)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        runtime = WeatherMotionRuntime()
+        runtime.trigger_response_wave(
+            simulation.state,
+            result.node_id,
+            20,
+            TouchResponseKind.LONG_PRESS,
+        )
+
+        items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=20 + config.CLOUD_GROWTH_PEAK_FRAME,
+            motion_atlas=atlas,
+            motion_runtime=runtime,
+        )
+        payload = next(item.payload for item in items if isinstance(item.payload, NodePayload))
+
+        self.assertEqual(payload.response_kind, TouchResponseKind.LONG_PRESS)
+        self.assertEqual(payload.growth_level, config.CLOUD_LONG_PRESS_RESPONSE_STRENGTH)
 
     def test_growth_wave_reaches_neighbor_payload_after_delay(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=12345)

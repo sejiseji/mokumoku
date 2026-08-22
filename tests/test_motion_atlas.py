@@ -15,6 +15,7 @@ from src.motion.cloud_motion import (
 )
 from src.motion.quantize import unpack_signed
 from src.motion.runtime import (
+    TouchResponseKind,
     WeatherMotionRuntime,
     choose_morph_node_ids,
     hysteresis_step,
@@ -189,6 +190,89 @@ class MotionAtlasTests(unittest.TestCase):
                 grandchild_pulse.start_frame + config.CLOUD_GROWTH_PEAK_FRAME,
                 atlas.cloud_growth_ease,
             ),
+        )
+
+    def test_touch_response_kinds_use_distinct_windows_and_distances(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=123)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        root_result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(root_result.node_id)
+        root = simulation.state.nodes[root_result.node_id]
+        root_projection = project_point(root.position, camera)
+        child_result = simulation.tap_screen(
+            root_projection.screen_x + 30.0,
+            root_projection.screen_y,
+            camera,
+        )
+        self.assertIsNotNone(child_result.node_id)
+        child = simulation.state.nodes[child_result.node_id]
+        child_projection = project_point(child.position, camera)
+        grandchild_result = simulation.tap_screen(
+            child_projection.screen_x + 30.0,
+            child_projection.screen_y,
+            camera,
+        )
+        self.assertIsNotNone(grandchild_result.node_id)
+
+        runtime = WeatherMotionRuntime()
+        runtime.trigger_response_wave(
+            simulation.state,
+            root_result.node_id,
+            300,
+            TouchResponseKind.DRAG_START,
+        )
+
+        self.assertEqual(
+            runtime.growth_pulses[root_result.node_id].response_kind,
+            TouchResponseKind.DRAG_START,
+        )
+        self.assertIn(child_result.node_id, runtime.growth_pulses)
+        self.assertNotIn(grandchild_result.node_id, runtime.growth_pulses)
+        self.assertEqual(
+            runtime.growth_level(
+                root_result.node_id,
+                300 + config.CLOUD_GROWTH_PEAK_FRAME,
+                atlas.cloud_growth_ease,
+            ),
+            config.CLOUD_DRAG_START_RESPONSE_STRENGTH,
+        )
+
+    def test_drag_hold_and_release_have_input_specific_ease(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=123)
+        runtime = WeatherMotionRuntime()
+
+        runtime.trigger_drag_hold(7, 100)
+        self.assertEqual(runtime.response_kind(7, 106), TouchResponseKind.DRAG_HOLD)
+        self.assertEqual(
+            runtime.growth_level(7, 107, atlas.cloud_growth_ease),
+            config.CLOUD_DRAG_HOLD_RESPONSE_STRENGTH,
+        )
+
+        runtime.growth_pulses.clear()
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        runtime.trigger_response_wave(
+            simulation.state,
+            result.node_id,
+            200,
+            TouchResponseKind.RELEASE,
+        )
+
+        self.assertEqual(runtime.response_kind(result.node_id, 200), TouchResponseKind.RELEASE)
+        self.assertEqual(
+            runtime.growth_level(result.node_id, 200, atlas.cloud_growth_ease),
+            config.CLOUD_RELEASE_RESPONSE_STRENGTH,
+        )
+        self.assertEqual(
+            runtime.growth_level(
+                result.node_id,
+                200 + config.CLOUD_RELEASE_RESPONSE_DURATION_FRAMES,
+                atlas.cloud_growth_ease,
+            ),
+            0,
         )
 
     def test_growth_response_blocks_ambient_morph_until_cooldown(self) -> None:

@@ -18,7 +18,7 @@ from src.cloud.rendering import (
 )
 from src.cloud.simulation import CloudOperationResult, CloudSimulation
 from src.motion.atlas import WeatherMotionAtlas
-from src.motion.runtime import WeatherMotionRuntime
+from src.motion.runtime import TouchResponseKind, WeatherMotionRuntime
 from src.rng import RandomSource
 
 
@@ -38,6 +38,7 @@ class ActivePointer:
     selected_node_id: int | None
     dragging: bool = False
     long_press_sent: bool = False
+    last_drag_hold_frame: int | None = None
 
 
 @dataclass(frozen=True)
@@ -206,11 +207,23 @@ class MokumokuApp:
         if pressed and pointer.selected_node_id is not None:
             if distance >= config.DRAG_START_DISTANCE:
                 if not pointer.dragging:
-                    self.motion_runtime.trigger_growth_wave(
+                    self.motion_runtime.trigger_response_wave(
                         self.cloud.state,
                         pointer.selected_node_id,
                         self.state.frame,
+                        TouchResponseKind.DRAG_START,
                     )
+                    pointer.last_drag_hold_frame = self.state.frame
+                elif (
+                    pointer.last_drag_hold_frame is None
+                    or self.state.frame - pointer.last_drag_hold_frame
+                    >= config.CLOUD_DRAG_HOLD_REFRESH_FRAMES
+                ):
+                    self.motion_runtime.trigger_drag_hold(
+                        pointer.selected_node_id,
+                        self.state.frame,
+                    )
+                    pointer.last_drag_hold_frame = self.state.frame
                 pointer.dragging = True
                 self.cloud.drag_node_to_screen(pointer.selected_node_id, x, y, camera)
             elif (
@@ -219,7 +232,7 @@ class MokumokuApp:
                 and not pointer.long_press_sent
             ):
                 result = self.cloud.long_press_node(pointer.selected_node_id)
-                self.trigger_operation_growth(result)
+                self.trigger_operation_response(result, TouchResponseKind.LONG_PRESS)
                 pointer.long_press_sent = True
 
         if just_released:
@@ -244,15 +257,31 @@ class MokumokuApp:
             velocity = camera.right * ((x - pointer.start_x) / max(duration, 0.001))
             velocity -= camera.up * ((y - pointer.start_y) / max(duration, 0.001))
             result = self.cloud.flick_node(pointer.selected_node_id, velocity)
-            self.trigger_operation_growth(result)
+            self.trigger_operation_response(result, TouchResponseKind.RELEASE)
+        elif pointer.selected_node_id is not None and pointer.dragging:
+            self.motion_runtime.trigger_response_wave(
+                self.cloud.state,
+                pointer.selected_node_id,
+                self.state.frame,
+                TouchResponseKind.RELEASE,
+            )
         elif not pointer.dragging and not pointer.long_press_sent:
             result = self.cloud.tap_screen(x, y, camera)
-            self.trigger_operation_growth(result)
+            self.trigger_operation_response(result, TouchResponseKind.TAP)
 
         self.pointer = None
 
-    def trigger_operation_growth(self, result: CloudOperationResult) -> None:
-        self.motion_runtime.trigger_growth_wave(self.cloud.state, result.node_id, self.state.frame)
+    def trigger_operation_response(
+        self,
+        result: CloudOperationResult,
+        response_kind: TouchResponseKind,
+    ) -> None:
+        self.motion_runtime.trigger_response_wave(
+            self.cloud.state,
+            result.node_id,
+            self.state.frame,
+            response_kind,
+        )
 
     def cancel_pointer(self) -> None:
         self.pointer = None
@@ -277,7 +306,7 @@ class MokumokuApp:
         )
         self.draw_cloud()
         self.draw_camera_buttons()
-        pyxel.text(8, 8, "MOKUMOKU Prototype A4.5", config.COLOR_UI)
+        pyxel.text(8, 8, "MOKUMOKU Prototype A4.7", config.COLOR_UI)
         pyxel.text(
             8,
             18,
@@ -379,7 +408,11 @@ class MokumokuApp:
             self.draw_cloud_shape_overlay(payload, x, y)
 
     def draw_cloud_shape_overlay(self, payload: NodePayload, x: int, y: int) -> None:
-        if payload.shape_level <= 0 and payload.growth_level <= 0:
+        if (
+            payload.shape_level <= 0
+            and payload.growth_level <= 0
+            and payload.response_kind is None
+        ):
             return
 
         pyxel = self.pyxel
@@ -402,14 +435,62 @@ class MokumokuApp:
             puff(2.5, 6.5, 0.7, 6)
 
         growth = payload.growth_level
-        if growth >= 2:
-            puff(-5.5, -4.5, 0.7, 7)
-        if growth >= 5:
-            puff(5.0, -4.5, 0.8, 7)
-        if growth >= 8:
-            puff(0.5, 7.0, 0.7, 6)
-        if growth >= 9:
-            pyxel.line(cx + unit(-3.0), cy + unit(-7.0), cx + unit(3.0), cy + unit(-7.0), 7)
+        response_kind = payload.response_kind or TouchResponseKind.TAP
+        if response_kind is TouchResponseKind.DRAG_START:
+            if growth >= 2:
+                puff(-7.0, 0.0, 0.8, 7)
+                puff(7.0, 0.0, 0.8, 7)
+            if growth >= 5:
+                pyxel.line(
+                    cx + unit(-7.0),
+                    cy + unit(0.0),
+                    cx + unit(7.0),
+                    cy + unit(0.0),
+                    7,
+                )
+        elif response_kind is TouchResponseKind.DRAG_HOLD:
+            if growth >= 1:
+                puff(-7.5, -1.0, 0.7, 6)
+                puff(7.5, 1.0, 0.7, 6)
+            if growth >= 4:
+                pyxel.line(
+                    cx + unit(-6.0),
+                    cy + unit(2.5),
+                    cx + unit(6.0),
+                    cy + unit(-2.5),
+                    6,
+                )
+        elif response_kind is TouchResponseKind.LONG_PRESS:
+            if growth >= 2:
+                puff(-4.5, 4.5, 0.9, 6)
+                puff(4.0, 5.0, 0.9, 6)
+            if growth >= 8:
+                pyxel.line(
+                    cx + unit(-5.5),
+                    cy + unit(6.5),
+                    cx + unit(5.5),
+                    cy + unit(6.5),
+                    5,
+                )
+        elif response_kind is TouchResponseKind.RELEASE:
+            if growth >= 2:
+                puff(-3.0, -3.0, 0.6, 7)
+                puff(3.0, 3.0, 0.6, 6)
+        else:
+            if growth >= 2:
+                puff(-5.5, -4.5, 0.7, 7)
+            if growth >= 5:
+                puff(5.0, -4.5, 0.8, 7)
+            if growth >= 8:
+                puff(0.5, 7.0, 0.7, 6)
+            if growth >= 9:
+                pyxel.line(
+                    cx + unit(-3.0),
+                    cy + unit(-7.0),
+                    cx + unit(3.0),
+                    cy + unit(-7.0),
+                    7,
+                )
 
     def draw_single_cloud_mesh(self, payload: NodePayload, x: int, y: int) -> None:
         pyxel = self.pyxel
@@ -504,7 +585,7 @@ class MokumokuApp:
         pyxel.text(
             8,
             120,
-            f"growth pulses {self.motion_runtime.growth_pulse_count(self.state.frame)}",
+            f"responses {self.motion_runtime.growth_pulse_count(self.state.frame)}",
             config.COLOR_UI,
         )
 
