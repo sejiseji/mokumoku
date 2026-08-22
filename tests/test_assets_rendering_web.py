@@ -23,6 +23,7 @@ from src.cloud.rendering import (
     NodePayload,
     ambient_morph_priority,
     choose_cloud_sprite_family,
+    cloud_bridge_count,
     cloud_node_wobble,
     collect_cloud_render_items,
     single_node_mesh_intensity,
@@ -155,14 +156,19 @@ class AssetsRenderingWebTests(unittest.TestCase):
             item.payload for item in filled_items if isinstance(item.payload, BridgePayload)
         ]
         self.assertGreaterEqual(len(filled_bridges), 2)
+        self.assertTrue(
+            all(bridge.family is CloudSpriteFamily.INTERNAL for bridge in filled_bridges)
+        )
 
-        edge.strain = config.CLOUD_BRIDGE_MAX_STRAIN - 0.01
+        edge.strain = config.CLOUD_BRIDGE_NECK_STRAIN
         strained_items = collect_cloud_render_items(simulation.state, camera)
         strained_bridges = [
             item.payload for item in strained_items if isinstance(item.payload, BridgePayload)
         ]
         self.assertLess(len(strained_bridges), len(filled_bridges))
-        self.assertGreaterEqual(len(strained_bridges), 1)
+        self.assertEqual(len(strained_bridges), 1)
+        self.assertEqual(strained_bridges[0].family, CloudSpriteFamily.STRETCH)
+        self.assertLess(strained_bridges[0].visual_radius, filled_bridges[0].visual_radius)
 
         edge.strain = config.CLOUD_BRIDGE_MAX_STRAIN
         broken_items = collect_cloud_render_items(simulation.state, camera)
@@ -170,6 +176,29 @@ class AssetsRenderingWebTests(unittest.TestCase):
             item.payload for item in broken_items if isinstance(item.payload, BridgePayload)
         ]
         self.assertEqual(len(broken_bridges), 0)
+
+    def test_bridge_count_moves_from_fill_to_neck_by_strain(self) -> None:
+        self.assertEqual(cloud_bridge_count(0.92, 0.0, 0.0), 4)
+        self.assertEqual(cloud_bridge_count(0.72, 0.0, 0.0), 3)
+        self.assertEqual(cloud_bridge_count(0.60, 0.0, 0.0), 2)
+        self.assertEqual(cloud_bridge_count(0.92, config.CLOUD_BRIDGE_NECK_STRAIN, 0.4), 1)
+
+    def test_connected_tap_places_child_close_enough_for_cloud_cohesion(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        parent = simulation.state.nodes[result.node_id]
+        projection = project_point(parent.position, camera)
+
+        child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        self.assertIsNotNone(child.node_id)
+        child_node = simulation.state.nodes[child.node_id]
+        child_projection = project_point(child_node.position, camera)
+        distance = abs(child_projection.screen_x - projection.screen_x)
+        radius_sum = parent.radius * projection.scale + child_node.radius * child_projection.scale
+
+        self.assertLessEqual(distance / radius_sum, 1.05)
 
     def test_sprite_family_uses_projected_role_and_attribute_states(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))

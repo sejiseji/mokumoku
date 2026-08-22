@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from src import config
 from src.assets.sprite_map import (
+    CLOUD_SPRITE_VARIANT_COUNT,
     CloudSpriteFamily,
     SpriteRect,
     cloud_sprite_rect,
@@ -31,6 +32,10 @@ class BridgePayload:
     edge: CloudEdge
     point: ProjectedPoint
     sprite: SpriteRect
+    family: CloudSpriteFamily
+    strain_t: float
+    distance_ratio: float
+    visual_radius: float
 
 
 @dataclass(frozen=True)
@@ -238,33 +243,66 @@ def cloud_bridge_payloads(
     strain_span = max(0.001, config.CLOUD_BRIDGE_MAX_STRAIN - config.CLOUD_BRIDGE_MIN_STRAIN)
     strain_t = max(0.0, min(1.0, (edge.strain - config.CLOUD_BRIDGE_MIN_STRAIN) / strain_span))
     distance_ratio = distance / max(1.0, radius_sum)
-    bridge_count = 1
-    if strain_t < 0.45 and distance_ratio >= config.CLOUD_BRIDGE_TRIPLE_RATIO:
-        bridge_count = 3
-    elif strain_t < 0.70 and distance_ratio >= config.CLOUD_BRIDGE_DOUBLE_RATIO:
-        bridge_count = 2
-
-    if bridge_count == 1:
-        offsets = (0.5,)
-    elif bridge_count == 2:
-        offsets = (0.42, 0.58)
-    else:
-        offsets = (0.34, 0.5, 0.66)
-
-    base_radius = min(radius_a, radius_b) * (0.72 - strain_t * 0.34)
+    bridge_count = cloud_bridge_count(distance_ratio, edge.strain, strain_t)
+    offsets = cloud_bridge_offsets(bridge_count)
+    family = cloud_bridge_family(edge.strain, strain_t)
+    radius_scale = (
+        config.CLOUD_BRIDGE_NECK_RADIUS_SCALE
+        if family is CloudSpriteFamily.STRETCH
+        else config.CLOUD_BRIDGE_FULL_RADIUS_SCALE
+    )
+    base_radius = min(radius_a, radius_b) * (
+        radius_scale - strain_t * (radius_scale - config.CLOUD_BRIDGE_NECK_RADIUS_SCALE)
+    )
     payloads: list[BridgePayload] = []
     for offset in offsets:
         point = node_a.position.lerp(node_b.position, offset)
         projection = project_point(point, camera)
         if not projection.visible:
             continue
-        center_factor = 1.0 - abs(offset - 0.5) * 0.22
+        edge_taper = 0.26 if family is CloudSpriteFamily.INTERNAL else 0.12
+        center_factor = 1.0 - abs(offset - 0.5) * edge_taper
+        visual_radius = max(1.0, base_radius * center_factor)
+        variant = (edge.id + len(payloads)) % CLOUD_SPRITE_VARIANT_COUNT
         sprite = cloud_sprite_rect(
-            CloudSpriteFamily.INTERNAL,
-            size_class_for_screen_radius(base_radius * center_factor),
+            family,
+            size_class_for_screen_radius(visual_radius),
+            variant,
         )
-        payloads.append(BridgePayload(edge, projection, sprite))
+        payloads.append(
+            BridgePayload(edge, projection, sprite, family, strain_t, distance_ratio, visual_radius)
+        )
     return payloads
+
+
+def cloud_bridge_count(distance_ratio: float, strain: float, strain_t: float) -> int:
+    if strain >= config.CLOUD_BRIDGE_NECK_STRAIN or strain_t >= 0.72:
+        return 1
+    if strain_t >= 0.45:
+        return 2 if distance_ratio >= config.CLOUD_BRIDGE_TRIPLE_RATIO else 1
+    if distance_ratio >= config.CLOUD_BRIDGE_QUAD_RATIO:
+        return 4
+    if distance_ratio >= config.CLOUD_BRIDGE_TRIPLE_RATIO:
+        return 3
+    if distance_ratio >= config.CLOUD_BRIDGE_DOUBLE_RATIO:
+        return 2
+    return 1
+
+
+def cloud_bridge_offsets(bridge_count: int) -> tuple[float, ...]:
+    if bridge_count <= 1:
+        return (0.5,)
+    if bridge_count == 2:
+        return (0.40, 0.60)
+    if bridge_count == 3:
+        return (0.32, 0.50, 0.68)
+    return (0.26, 0.42, 0.58, 0.74)
+
+
+def cloud_bridge_family(strain: float, strain_t: float) -> CloudSpriteFamily:
+    if strain >= config.CLOUD_BRIDGE_NECK_STRAIN or strain_t >= 0.45:
+        return CloudSpriteFamily.STRETCH
+    return CloudSpriteFamily.INTERNAL
 
 
 def cloud_node_wobble(
