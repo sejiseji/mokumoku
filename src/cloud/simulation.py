@@ -451,7 +451,7 @@ class CloudSimulation:
                 )
             )
 
-        create_budget = new_seed_budget(charge, local_density)
+        create_budget = max(1, new_seed_budget(charge, local_density))
         if charge < 0.18 and local_density < 0.35:
             create_budget = min(create_budget, 1)
         center_has_existing = any(
@@ -466,8 +466,6 @@ class CloudSimulation:
         )
         if not center_has_existing and local_density < 0.25:
             create_budget = max(1, create_budget)
-        if local_density >= 0.60:
-            create_budget = min(create_budget, 1 if primary_node_id is None else 0)
         create_candidates = self.radial_create_candidates(
             reaction_id,
             screen_x,
@@ -894,21 +892,24 @@ class CloudSimulation:
         )
         node = create_node(self.state, lineage_id, cluster_id, plan.world_position, local_rng)
         strength = clamp01(plan.effective_strength)
+        radial_t = clamp01(plan.normalized_radius)
+        size_jitter = (stable_hash01(reaction_id, node.id, 0x512E) - 0.5) * 0.10
+        radial_size = 1.38 - 0.74 * radial_t + size_jitter
         if plan.zone is RadialZone.CORE:
-            node.mass = config.SEED_MASS * (0.92 + 0.70 * strength)
-            node.activation = clamp01(0.42 + 0.53 * strength)
-            node.moisture = clamp01(0.42 + 0.28 * strength)
-            node.density = 0.95
+            node.mass = config.SEED_MASS * (radial_size + 0.30 * strength)
+            node.activation = clamp01(0.44 + 0.50 * strength)
+            node.moisture = clamp01(0.43 + 0.26 * strength)
+            node.density = 0.90
         elif plan.zone is RadialZone.MIDDLE:
-            node.mass = config.SEED_MASS * (0.72 + 0.44 * strength)
-            node.activation = clamp01(0.24 + 0.48 * strength)
-            node.moisture = clamp01(0.38 + 0.24 * strength)
-            node.density = 0.95
+            node.mass = config.SEED_MASS * (radial_size + 0.22 * strength)
+            node.activation = clamp01(0.26 + 0.46 * strength)
+            node.moisture = clamp01(0.38 + 0.23 * strength)
+            node.density = 1.00
         else:
-            node.mass = config.SEED_MASS * (0.58 + 0.25 * strength)
-            node.activation = clamp01(0.08 + 0.32 * strength)
-            node.moisture = clamp01(0.34 + 0.20 * strength)
-            node.density = 1.05
+            node.mass = config.SEED_MASS * (max(0.48, radial_size) + 0.12 * strength)
+            node.activation = clamp01(0.10 + 0.30 * strength)
+            node.moisture = clamp01(0.33 + 0.18 * strength)
+            node.density = 1.12
         node.noise = clamp01(0.18 + 0.22 * strength)
         node.untouched_time = 0.0
         if plan.zone is not RadialZone.CORE:

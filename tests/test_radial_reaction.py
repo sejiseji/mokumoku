@@ -80,13 +80,9 @@ class RadialReactionTests(unittest.TestCase):
         ]
         self.assertEqual(len(created_events), long.reaction_summary.created_seeds)
 
-    def test_dense_reaction_prefers_existing_nodes_over_new_seeds(self) -> None:
-        sparse = CloudSimulation(RandomSource(12345))
-        camera = build_camera_basis(0.0)
-        sparse_result = sparse.radial_reaction_screen(160.0, 190.0, 0.95, camera)
-        self.assertIsNotNone(sparse_result.reaction_summary)
-
+    def test_dense_reaction_creates_new_seed_and_interferes_with_existing_nodes(self) -> None:
         dense = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
         root = dense.radial_reaction_screen(160.0, 190.0, 0.05, camera)
         self.assertTrue(root.spawned_node_ids)
         current = dense.state.nodes[root.spawned_node_ids[0]]
@@ -105,10 +101,19 @@ class RadialReactionTests(unittest.TestCase):
 
         self.assertIsNotNone(dense_result.reaction_summary)
         self.assertGreater(dense_result.reaction_summary.local_density, 0.45)
+        self.assertGreaterEqual(dense_result.reaction_summary.created_seeds, 1)
         self.assertGreaterEqual(dense_result.reaction_summary.productive_hits, 1)
-        self.assertLessEqual(
-            dense_result.reaction_summary.created_seeds,
-            sparse_result.reaction_summary.created_seeds,
+        self.assertTrue(
+            any(
+                event.kind is ReactionEventKind.CREATE_SEED
+                for event in dense_result.reaction_events
+            )
+        )
+        self.assertTrue(
+            any(
+                event.kind is ReactionEventKind.GROW_EXISTING
+                for event in dense_result.reaction_events
+            )
         )
 
     def test_wave_events_arrive_from_center_to_outer_radius(self) -> None:
@@ -142,6 +147,26 @@ class RadialReactionTests(unittest.TestCase):
         for _ in range(first_hidden_frame - result.created_frame + 1):
             simulation.update(1.0 / config.FPS)
         self.assertEqual(simulation.state.nodes[first_hidden_id].fade, 1.0)
+
+    def test_radial_seed_initial_size_varies_by_distance(self) -> None:
+        simulation = CloudSimulation(RandomSource(13579))
+        camera = build_camera_basis(0.0)
+
+        result = simulation.radial_reaction_screen(160.0, 190.0, 0.95, camera)
+
+        self.assertGreaterEqual(len(result.spawned_node_ids), 3)
+        seeds_by_distance = sorted(
+            (
+                distance_from_origin(simulation, camera, node_id, 160.0, 190.0),
+                simulation.state.nodes[node_id].radius,
+            )
+            for node_id in result.spawned_node_ids
+        )
+        inner_distance, inner_radius = seeds_by_distance[0]
+        outer_distance, outer_radius = seeds_by_distance[-1]
+
+        self.assertLess(inner_distance, outer_distance)
+        self.assertGreater(inner_radius, outer_radius + 2.0)
 
     def test_radial_reaction_plan_is_deterministic(self) -> None:
         first = radial_signature()
@@ -178,6 +203,17 @@ def radial_signature() -> tuple:
             for node_id in result.spawned_node_ids
         ),
     )
+
+
+def distance_from_origin(
+    simulation: CloudSimulation,
+    camera,
+    node_id: int,
+    origin_x: float,
+    origin_y: float,
+) -> float:
+    projection = project_point(simulation.state.nodes[node_id].position, camera)
+    return ((projection.screen_x - origin_x) ** 2 + (projection.screen_y - origin_y) ** 2) ** 0.5
 
 
 if __name__ == "__main__":
