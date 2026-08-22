@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src import config
+from src.build_info import APP_BUILD_LABEL
 from src.camera.camera import CameraController
 from src.camera.projection import camera_depth
 from src.cloud.incubation import build_adjacency, node_retention_score
@@ -289,6 +290,12 @@ class MokumokuApp:
         if self.debug_enabled:
             self.draw_debug()
         pyxel.text(8, config.SCREEN_HEIGHT - 14, "</> cam  D debug  F4 age", config.COLOR_UI)
+        pyxel.text(
+            config.SCREEN_WIDTH - 8 - len(APP_BUILD_LABEL) * 4,
+            config.SCREEN_HEIGHT - 14,
+            APP_BUILD_LABEL,
+            config.COLOR_UI,
+        )
 
     def draw_cloud(self) -> None:
         camera = self.camera.basis()

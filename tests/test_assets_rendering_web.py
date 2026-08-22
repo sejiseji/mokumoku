@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 import pyxel
-from scripts.build_web import disable_virtual_gamepad, prune_versioned_builds
+from scripts.build_web import disable_virtual_gamepad, prune_versioned_builds, write_build_info
 from src import config
 from src.assets.sprite_map import CloudSpriteFamily, cloud_sprite_rect, size_class_for_screen_radius
 from src.camera.camera import build_camera_basis
@@ -513,10 +513,22 @@ class AssetsRenderingWebTests(unittest.TestCase):
             self.assertIn("touch-action:none", text)
             self.assertIn("viewport-fit=cover", text)
             self.assertIn("user-scalable=no", text)
+            self.assertIn("no-store, no-cache, must-revalidate", text)
             self.assertIn('name: "mokumoku-abc123def456.pyxapp"', text)
             self.assertIn('name="mokumoku-build" content="abc123def456"', text)
         finally:
             html_path.unlink(missing_ok=True)
+
+    def test_web_build_info_stamp_is_written_into_package_copy(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mokumoku_build_info_") as temp_dir_name:
+            package_dir = Path(temp_dir_name)
+            (package_dir / "src").mkdir()
+
+            build_info_path = write_build_info(package_dir, "20260822044236")
+
+            text = build_info_path.read_text(encoding="utf-8")
+            self.assertIn('APP_BUILD_STAMP = "20260822044236"', text)
+            self.assertIn('APP_BUILD_LABEL = "b044236"', text)
 
     def test_versioned_web_build_prunes_third_previous_build(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mokumoku_builds_") as temp_dir_name:

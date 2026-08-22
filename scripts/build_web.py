@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,7 @@ class WebBuildResult:
     root_path: Path
     versioned_path: Path
     build_id: str
+    build_stamp: str = ""
     pruned_paths: tuple[Path, ...] = ()
 
 
@@ -61,6 +63,22 @@ def file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def current_build_stamp() -> str:
+    return datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+
+
+def write_build_info(package_dir: Path, build_stamp: str) -> Path:
+    build_label = f"b{build_stamp[-6:]}"
+    build_info_path = package_dir / "src" / "build_info.py"
+    build_info_path.write_text(
+        "from __future__ import annotations\n\n"
+        f'APP_BUILD_STAMP = "{build_stamp}"\n'
+        f'APP_BUILD_LABEL = "{build_label}"\n',
+        encoding="utf-8",
+    )
+    return build_info_path
+
+
 def disable_virtual_gamepad(html_path: Path, build_id: str | None = None) -> None:
     text = html_path.read_text(encoding="utf-8")
     text = text.replace(', gamepad: "enabled"', "")
@@ -82,6 +100,18 @@ def disable_virtual_gamepad(html_path: Path, build_id: str | None = None) -> Non
             text = text.replace("<head>", mobile_head)
         else:
             text = text.replace("<!doctype html>\n", f"<!doctype html>\n{mobile_head}\n", 1)
+    cache_meta = (
+        '<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">'
+        '<meta http-equiv="Pragma" content="no-cache">'
+        '<meta http-equiv="Expires" content="0">'
+    )
+    if 'http-equiv="Cache-Control"' not in text:
+        if "</head>" in text:
+            text = text.replace("</head>", f"{cache_meta}</head>", 1)
+        elif "<head>" in text:
+            text = text.replace("<head>", f"<head>{cache_meta}", 1)
+        else:
+            text = f"{cache_meta}\n{text}"
     if build_id is not None and 'name="mokumoku-build"' not in text:
         build_meta = f'<meta name="mokumoku-build" content="{build_id}">'
         if "</head>" in text:
@@ -137,6 +167,8 @@ def build_web() -> WebBuildResult:
             ),
         )
 
+        build_stamp = current_build_stamp()
+        write_build_info(package_dir, build_stamp)
         run_command(["pyxel", "package", ".", "main.py"], cwd=package_dir)
         app_file = package_dir / f"{APP_NAME}.pyxapp"
         build_id = file_digest(app_file)[:BUILD_ID_LENGTH]
@@ -158,6 +190,7 @@ def build_web() -> WebBuildResult:
             root_path=root_path,
             versioned_path=versioned_path,
             build_id=build_id,
+            build_stamp=build_stamp,
             pruned_paths=pruned_paths,
         )
 
@@ -176,6 +209,7 @@ def main() -> int:
         return 1
 
     print(f"build id {result.build_id}")
+    print(f"build stamp {result.build_stamp}")
     print(f"wrote {result.root_path.relative_to(PROJECT_ROOT)}")
     print(f"wrote {result.versioned_path.relative_to(PROJECT_ROOT)}")
     for path in result.pruned_paths:
