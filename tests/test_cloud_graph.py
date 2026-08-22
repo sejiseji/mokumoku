@@ -11,6 +11,11 @@ from src.math3d import Vec3
 from src.rng import RandomSource
 
 
+def first_spawned_node_id(result) -> int:
+    assert result.spawned_node_ids
+    return result.spawned_node_ids[0]
+
+
 class CloudGraphTests(unittest.TestCase):
     def make_simulation(self) -> tuple[CloudSimulation, object]:
         simulation = CloudSimulation(RandomSource(12345))
@@ -38,7 +43,7 @@ class CloudGraphTests(unittest.TestCase):
 
         result = simulation.tap_screen(300.0, 80.0, camera)
 
-        self.assertEqual(result.kind, "child")
+        self.assertEqual(result.kind, "seed")
         self.assertIsNotNone(result.node_id)
         self.assertEqual(len(simulation.state.lineages), 1)
         self.assertEqual(len(simulation.state.nodes), 2)
@@ -55,7 +60,9 @@ class CloudGraphTests(unittest.TestCase):
 
         result = simulation.tap_screen(projection.screen_x, projection.screen_y, camera)
 
-        self.assertEqual(result.kind, "tap")
+        self.assertEqual(result.kind, "stimulus")
+        self.assertIsNotNone(result.reaction_id)
+        self.assertGreaterEqual(result.reaction_summary.reacted_nodes, 1)
         self.assertGreater(node.mass, old_mass)
         self.assertEqual(node.untouched_time, 0.0)
 
@@ -65,7 +72,8 @@ class CloudGraphTests(unittest.TestCase):
 
         result = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
 
-        self.assertEqual(result.kind, "child")
+        self.assertEqual(result.kind, "stimulus")
+        self.assertGreaterEqual(len(result.spawned_node_ids), 1)
         self.assertEqual(len(simulation.state.nodes), 2)
         self.assertEqual(len(simulation.state.edges), 1)
         self.assertEqual(node_degree(simulation.state, node_id), 1)
@@ -75,7 +83,7 @@ class CloudGraphTests(unittest.TestCase):
         projection = project_point(simulation.state.nodes[node_id].position, camera)
 
         result = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
-        self.assertIsNotNone(result.node_id)
+        self.assertGreaterEqual(len(result.spawned_node_ids), 1)
         edge = next(iter(simulation.state.edges.values()))
 
         self.assertAlmostEqual(
@@ -92,9 +100,9 @@ class CloudGraphTests(unittest.TestCase):
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
         child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
+        child_id = first_spawned_node_id(child)
         parent = simulation.state.nodes[node_id]
-        child_node = simulation.state.nodes[child.node_id]
+        child_node = simulation.state.nodes[child_id]
         old_distance = parent.position.distance_to(child_node.position)
 
         simulation.update(1.0 / 6.0)
@@ -134,8 +142,8 @@ class CloudGraphTests(unittest.TestCase):
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
         child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
-        child_node = simulation.state.nodes[child.node_id]
+        child_id = first_spawned_node_id(child)
+        child_node = simulation.state.nodes[child_id]
         child_projection = project_point(child_node.position, camera)
 
         simulation.drag_node_to_screen(
@@ -155,9 +163,9 @@ class CloudGraphTests(unittest.TestCase):
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
         child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
+        child_id = first_spawned_node_id(child)
 
-        result = simulation.flick_node(child.node_id, Vec3(500.0, 0.0, 0.0))
+        result = simulation.flick_node(child_id, Vec3(500.0, 0.0, 0.0))
 
         self.assertEqual(result.kind, "flick")
         self.assertEqual(len(simulation.state.edges), 0)
@@ -167,14 +175,14 @@ class CloudGraphTests(unittest.TestCase):
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
         child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
+        child_id = first_spawned_node_id(child)
         lineage = simulation.state.active_lineage()
         self.assertIsNotNone(lineage)
         lineage.scored_event_ids.add("lineage:sample")
-        simulation.flick_node(child.node_id, Vec3(0.0, 0.0, 0.0))
+        simulation.flick_node(child_id, Vec3(0.0, 0.0, 0.0))
 
         parent = simulation.state.nodes[node_id]
-        child_node = simulation.state.nodes[child.node_id]
+        child_node = simulation.state.nodes[child_id]
         child_node.previous_position = child_node.position
         child_node.position = parent.position + Vec3(8.0, 0.0, 0.0)
         child_node.velocity = Vec3(0.0, 0.0, 0.0)

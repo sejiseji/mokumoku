@@ -10,6 +10,7 @@ from src.build_info import APP_BUILD_LABEL
 from src.camera.camera import CameraController
 from src.camera.projection import camera_depth
 from src.cloud.incubation import build_adjacency, node_retention_score
+from src.cloud.reaction import ReactionEventKind
 from src.cloud.rendering import (
     BridgePayload,
     EdgePayload,
@@ -280,6 +281,31 @@ class MokumokuApp:
         result: CloudOperationResult,
         response_kind: TouchResponseKind,
     ) -> None:
+        if result.reaction_events:
+            for event in result.reaction_events:
+                offset = max(0, event.execute_frame - result.created_frame)
+                strength = max(
+                    1,
+                    int(
+                        round(
+                            config.CLOUD_TAP_RESPONSE_STRENGTH
+                            * (0.36 + event.energy * 0.64)
+                        )
+                    ),
+                )
+                if event.kind is ReactionEventKind.SECONDARY_SPROUT:
+                    strength = max(strength, config.CLOUD_TAP_RESPONSE_STRENGTH - 2)
+                elif event.kind is ReactionEventKind.SEED_IGNITION:
+                    strength = max(strength, config.CLOUD_TAP_RESPONSE_STRENGTH - 4)
+                self.motion_runtime.schedule_response(
+                    event.target_node_id,
+                    self.state.frame + offset,
+                    config.REACTION_PULSE_DURATION_FRAMES,
+                    strength,
+                    graph_distance=event.generation,
+                    response_kind=response_kind,
+                )
+            return
         self.motion_runtime.trigger_response_wave(
             self.cloud.state,
             result.node_id,
@@ -310,7 +336,7 @@ class MokumokuApp:
         )
         self.draw_cloud()
         self.draw_camera_buttons()
-        pyxel.text(8, 8, "MOKUMOKU Prototype A5", config.COLOR_UI)
+        pyxel.text(8, 8, "MOKUMOKU Prototype A6", config.COLOR_UI)
         pyxel.text(
             8,
             18,

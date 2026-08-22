@@ -144,27 +144,30 @@ class MotionAtlasTests(unittest.TestCase):
         self.assertIsNotNone(root_result.node_id)
         root = simulation.state.nodes[root_result.node_id]
         root_projection = project_point(root.position, camera)
-        child_result = simulation.tap_screen(
+        child = simulation.add_child_near_screen(
+            root,
             root_projection.screen_x + 30.0,
             root_projection.screen_y,
             camera,
         )
-        self.assertIsNotNone(child_result.node_id)
-        child = simulation.state.nodes[child_result.node_id]
+        self.assertIsNotNone(child)
+        child_id = child.id
         child_projection = project_point(child.position, camera)
-        grandchild_result = simulation.tap_screen(
+        grandchild = simulation.add_child_near_screen(
+            child,
             child_projection.screen_x + 30.0,
             child_projection.screen_y,
             camera,
         )
-        self.assertIsNotNone(grandchild_result.node_id)
+        self.assertIsNotNone(grandchild)
+        grandchild_id = grandchild.id
 
         runtime = WeatherMotionRuntime()
         runtime.trigger_growth_wave(simulation.state, root_result.node_id, 200)
 
         root_pulse = runtime.growth_pulses[root_result.node_id]
-        child_pulse = runtime.growth_pulses[child_result.node_id]
-        grandchild_pulse = runtime.growth_pulses[grandchild_result.node_id]
+        child_pulse = runtime.growth_pulses[child_id]
+        grandchild_pulse = runtime.growth_pulses[grandchild_id]
 
         self.assertEqual(root_pulse.start_frame, 200)
         self.assertEqual(child_pulse.start_frame, 200 + config.CLOUD_PULSE_PROPAGATION_DELAY_FRAMES)
@@ -181,12 +184,12 @@ class MotionAtlasTests(unittest.TestCase):
 
         self.assertGreater(
             runtime.growth_level(
-                child_result.node_id,
+                child_id,
                 child_pulse.start_frame + config.CLOUD_GROWTH_PEAK_FRAME,
                 atlas.cloud_growth_ease,
             ),
             runtime.growth_level(
-                grandchild_result.node_id,
+                grandchild_id,
                 grandchild_pulse.start_frame + config.CLOUD_GROWTH_PEAK_FRAME,
                 atlas.cloud_growth_ease,
             ),
@@ -200,20 +203,23 @@ class MotionAtlasTests(unittest.TestCase):
         self.assertIsNotNone(root_result.node_id)
         root = simulation.state.nodes[root_result.node_id]
         root_projection = project_point(root.position, camera)
-        child_result = simulation.tap_screen(
+        child = simulation.add_child_near_screen(
+            root,
             root_projection.screen_x + 30.0,
             root_projection.screen_y,
             camera,
         )
-        self.assertIsNotNone(child_result.node_id)
-        child = simulation.state.nodes[child_result.node_id]
+        self.assertIsNotNone(child)
+        child_id = child.id
         child_projection = project_point(child.position, camera)
-        grandchild_result = simulation.tap_screen(
+        grandchild = simulation.add_child_near_screen(
+            child,
             child_projection.screen_x + 30.0,
             child_projection.screen_y,
             camera,
         )
-        self.assertIsNotNone(grandchild_result.node_id)
+        self.assertIsNotNone(grandchild)
+        grandchild_id = grandchild.id
 
         runtime = WeatherMotionRuntime()
         runtime.trigger_response_wave(
@@ -227,8 +233,8 @@ class MotionAtlasTests(unittest.TestCase):
             runtime.growth_pulses[root_result.node_id].response_kind,
             TouchResponseKind.DRAG_START,
         )
-        self.assertIn(child_result.node_id, runtime.growth_pulses)
-        self.assertNotIn(grandchild_result.node_id, runtime.growth_pulses)
+        self.assertIn(child_id, runtime.growth_pulses)
+        self.assertNotIn(grandchild_id, runtime.growth_pulses)
         self.assertEqual(
             runtime.growth_level(
                 root_result.node_id,

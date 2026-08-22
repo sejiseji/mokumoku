@@ -44,6 +44,11 @@ def ensure_headless_pyxel() -> None:
         pyxel.init(16, 16, headless=True)
 
 
+def first_spawned_node_id(result) -> int:
+    assert result.spawned_node_ids
+    return result.spawned_node_ids[0]
+
+
 class AssetsRenderingWebTests(unittest.TestCase):
     def test_cloud_resource_exists_and_loads_in_headless_pyxel(self) -> None:
         resource_path = PROJECT_ROOT / "assets" / "mokumoku.pyxres"
@@ -192,8 +197,8 @@ class AssetsRenderingWebTests(unittest.TestCase):
         projection = project_point(parent.position, camera)
 
         child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
-        child_node = simulation.state.nodes[child.node_id]
+        child_id = first_spawned_node_id(child)
+        child_node = simulation.state.nodes[child_id]
         child_projection = project_point(child_node.position, camera)
         distance = abs(child_projection.screen_x - projection.screen_x)
         radius_sum = parent.radius * projection.scale + child_node.radius * child_projection.scale
@@ -417,7 +422,7 @@ class AssetsRenderingWebTests(unittest.TestCase):
         parent = simulation.state.nodes[result.node_id]
         projection = project_point(parent.position, camera)
         child = simulation.tap_screen(projection.screen_x + 30.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
+        self.assertGreaterEqual(len(child.spawned_node_ids), 1)
 
         runtime = WeatherMotionRuntime()
         variant_counts: list[int] = []
@@ -506,7 +511,7 @@ class AssetsRenderingWebTests(unittest.TestCase):
         parent = simulation.state.nodes[result.node_id]
         projection = project_point(parent.position, camera)
         child = simulation.tap_screen(projection.screen_x + 30.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
+        child_id = first_spawned_node_id(child)
         runtime = WeatherMotionRuntime()
         runtime.trigger_growth_wave(simulation.state, result.node_id, 40)
 
@@ -537,9 +542,9 @@ class AssetsRenderingWebTests(unittest.TestCase):
             if isinstance(item.payload, NodePayload)
         }
 
-        self.assertEqual(before_payloads[child.node_id].growth_level, 0)
+        self.assertEqual(before_payloads[child_id].growth_level, 0)
         self.assertEqual(
-            peak_payloads[child.node_id].growth_level,
+            peak_payloads[child_id].growth_level,
             config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[1],
         )
 
@@ -575,7 +580,7 @@ class AssetsRenderingWebTests(unittest.TestCase):
         parent = simulation.state.nodes[result.node_id]
         projection = project_point(parent.position, camera)
         child = simulation.tap_screen(projection.screen_x + 30.0, projection.screen_y, camera)
-        self.assertIsNotNone(child.node_id)
+        self.assertGreaterEqual(len(child.spawned_node_ids), 1)
 
         parent_projection = project_point(parent.position, camera)
         intensity = single_node_mesh_intensity(

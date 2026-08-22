@@ -155,6 +155,32 @@ class WeatherMotionRuntime:
                 response_kind=response_kind,
             )
 
+    def schedule_response(
+        self,
+        node_id: int | None,
+        frame: int,
+        duration_frames: int,
+        strength_level: int,
+        graph_distance: int = 0,
+        response_kind: TouchResponseKind = TouchResponseKind.TAP,
+    ) -> None:
+        if node_id is None or strength_level <= 0 or duration_frames <= 0:
+            return
+        existing = self.growth_pulses.get(node_id)
+        if existing is not None:
+            existing_end = existing.start_frame + existing.duration_frames
+            overlaps = existing.start_frame <= frame < existing_end
+            if overlaps and existing.strength_level >= strength_level:
+                return
+        self.growth_pulses[node_id] = GrowthPulse(
+            node_id=node_id,
+            start_frame=frame,
+            duration_frames=duration_frames,
+            strength_level=strength_level,
+            graph_distance=graph_distance,
+            response_kind=response_kind,
+        )
+
     def trigger_drag_hold(self, node_id: int | None, frame: int) -> None:
         if node_id is None:
             return
