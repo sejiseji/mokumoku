@@ -66,7 +66,7 @@ class MotionAtlasTests(unittest.TestCase):
 
         self.assertEqual(ease[0], 0)
         self.assertEqual(ease[config.CLOUD_GROWTH_PEAK_FRAME], 10)
-        self.assertGreater(ease[config.CLOUD_GROWTH_SETTLE_FRAME], 0)
+        self.assertGreater(ease[config.CLOUD_GROWTH_PEAK_FRAME + 1], 0)
         self.assertEqual(ease[-1], 0)
 
     def test_cloud_motion_bank_is_low_passed_before_quantization(self) -> None:
@@ -128,11 +128,87 @@ class MotionAtlasTests(unittest.TestCase):
                 100 + config.CLOUD_GROWTH_PEAK_FRAME,
                 atlas.cloud_growth_ease,
             ),
-            10,
+            config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[0],
         )
         self.assertEqual(
             runtime.growth_level(7, 100 + len(atlas.cloud_growth_ease), atlas.cloud_growth_ease),
             0,
+        )
+
+    def test_growth_wave_propagates_to_graph_distance_two_with_delay(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=123)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        root_result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(root_result.node_id)
+        root = simulation.state.nodes[root_result.node_id]
+        root_projection = project_point(root.position, camera)
+        child_result = simulation.tap_screen(
+            root_projection.screen_x + 30.0,
+            root_projection.screen_y,
+            camera,
+        )
+        self.assertIsNotNone(child_result.node_id)
+        child = simulation.state.nodes[child_result.node_id]
+        child_projection = project_point(child.position, camera)
+        grandchild_result = simulation.tap_screen(
+            child_projection.screen_x + 30.0,
+            child_projection.screen_y,
+            camera,
+        )
+        self.assertIsNotNone(grandchild_result.node_id)
+
+        runtime = WeatherMotionRuntime()
+        runtime.trigger_growth_wave(simulation.state, root_result.node_id, 200)
+
+        root_pulse = runtime.growth_pulses[root_result.node_id]
+        child_pulse = runtime.growth_pulses[child_result.node_id]
+        grandchild_pulse = runtime.growth_pulses[grandchild_result.node_id]
+
+        self.assertEqual(root_pulse.start_frame, 200)
+        self.assertEqual(child_pulse.start_frame, 200 + config.CLOUD_PULSE_PROPAGATION_DELAY_FRAMES)
+        self.assertEqual(
+            grandchild_pulse.start_frame,
+            200 + config.CLOUD_PULSE_PROPAGATION_DELAY_FRAMES * 2,
+        )
+        self.assertEqual(root_pulse.strength_level, config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[0])
+        self.assertEqual(child_pulse.strength_level, config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[1])
+        self.assertEqual(
+            grandchild_pulse.strength_level,
+            config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[2],
+        )
+
+        self.assertGreater(
+            runtime.growth_level(
+                child_result.node_id,
+                child_pulse.start_frame + config.CLOUD_GROWTH_PEAK_FRAME,
+                atlas.cloud_growth_ease,
+            ),
+            runtime.growth_level(
+                grandchild_result.node_id,
+                grandchild_pulse.start_frame + config.CLOUD_GROWTH_PEAK_FRAME,
+                atlas.cloud_growth_ease,
+            ),
+        )
+
+    def test_growth_response_blocks_ambient_morph_until_cooldown(self) -> None:
+        runtime = WeatherMotionRuntime()
+        runtime.trigger_growth(3, 100)
+
+        self.assertTrue(runtime.response_blocks_ambient(3, 100))
+        self.assertTrue(
+            runtime.response_blocks_ambient(
+                3,
+                100 + config.CLOUD_TAP_PULSE_DURATION_FRAMES,
+            )
+        )
+        self.assertFalse(
+            runtime.response_blocks_ambient(
+                3,
+                100
+                + config.CLOUD_TAP_PULSE_DURATION_FRAMES
+                + config.POST_RESPONSE_AMBIENT_COOLDOWN_FRAMES,
+            )
         )
 
     def test_sparse_morph_selection_respects_state_ratio_and_absolute_cap(self) -> None:

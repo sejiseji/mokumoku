@@ -206,7 +206,11 @@ class MokumokuApp:
         if pressed and pointer.selected_node_id is not None:
             if distance >= config.DRAG_START_DISTANCE:
                 if not pointer.dragging:
-                    self.motion_runtime.trigger_growth(pointer.selected_node_id, self.state.frame)
+                    self.motion_runtime.trigger_growth_wave(
+                        self.cloud.state,
+                        pointer.selected_node_id,
+                        self.state.frame,
+                    )
                 pointer.dragging = True
                 self.cloud.drag_node_to_screen(pointer.selected_node_id, x, y, camera)
             elif (
@@ -248,7 +252,7 @@ class MokumokuApp:
         self.pointer = None
 
     def trigger_operation_growth(self, result: CloudOperationResult) -> None:
-        self.motion_runtime.trigger_growth(result.node_id, self.state.frame)
+        self.motion_runtime.trigger_growth_wave(self.cloud.state, result.node_id, self.state.frame)
 
     def cancel_pointer(self) -> None:
         self.pointer = None
@@ -495,6 +499,12 @@ class MokumokuApp:
             8,
             110,
             f"morph {list(active_morphs[:3])} next {next_text}",
+            config.COLOR_UI,
+        )
+        pyxel.text(
+            8,
+            120,
+            f"growth pulses {self.motion_runtime.growth_pulse_count(self.state.frame)}",
             config.COLOR_UI,
         )
 

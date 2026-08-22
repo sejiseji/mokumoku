@@ -437,8 +437,54 @@ class AssetsRenderingWebTests(unittest.TestCase):
             item.payload for item in settled_items if isinstance(item.payload, NodePayload)
         )
 
-        self.assertEqual(peak.growth_level, 10)
+        self.assertEqual(peak.growth_level, config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[0])
         self.assertEqual(settled.growth_level, 0)
+
+    def test_growth_wave_reaches_neighbor_payload_after_delay(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=12345)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        parent = simulation.state.nodes[result.node_id]
+        projection = project_point(parent.position, camera)
+        child = simulation.tap_screen(projection.screen_x + 30.0, projection.screen_y, camera)
+        self.assertIsNotNone(child.node_id)
+        runtime = WeatherMotionRuntime()
+        runtime.trigger_growth_wave(simulation.state, result.node_id, 40)
+
+        before_child_items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=40 + config.CLOUD_PULSE_PROPAGATION_DELAY_FRAMES - 1,
+            motion_atlas=atlas,
+            motion_runtime=runtime,
+        )
+        child_peak_items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=40
+            + config.CLOUD_PULSE_PROPAGATION_DELAY_FRAMES
+            + config.CLOUD_GROWTH_PEAK_FRAME,
+            motion_atlas=atlas,
+            motion_runtime=runtime,
+        )
+        before_payloads = {
+            item.payload.node.id: item.payload
+            for item in before_child_items
+            if isinstance(item.payload, NodePayload)
+        }
+        peak_payloads = {
+            item.payload.node.id: item.payload
+            for item in child_peak_items
+            if isinstance(item.payload, NodePayload)
+        }
+
+        self.assertEqual(before_payloads[child.node_id].growth_level, 0)
+        self.assertEqual(
+            peak_payloads[child.node_id].growth_level,
+            config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[1],
+        )
 
     def test_small_single_cloud_uses_slow_mesh_overlay(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))

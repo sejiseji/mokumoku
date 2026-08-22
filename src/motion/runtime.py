@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass, field
 
 from src import config
+from src.cloud.model import CloudState
 
 
 @dataclass(slots=True)
@@ -21,9 +22,18 @@ class ClusterMorphScheduler:
     active_event: AmbientMorphEvent | None = None
 
 
+@dataclass(slots=True)
+class GrowthPulse:
+    node_id: int
+    start_frame: int
+    duration_frames: int
+    strength_level: int
+    graph_distance: int
+
+
 @dataclass
 class WeatherMotionRuntime:
-    growth_started_at: dict[int, int] = field(default_factory=dict)
+    growth_pulses: dict[int, GrowthPulse] = field(default_factory=dict)
     morph_schedulers: dict[int, ClusterMorphScheduler] = field(default_factory=dict)
 
     def ambient_morph_variants(
@@ -79,21 +89,70 @@ class WeatherMotionRuntime:
         variant = ambient_morph_variant(age)
         if variant == 0:
             return {}
-        return {node_id: variant for node_id in event.node_ids}
+        return {
+            node_id: variant
+            for node_id in event.node_ids
+            if not self.response_blocks_ambient(node_id, frame)
+        }
 
     def trigger_growth(self, node_id: int | None, frame: int) -> None:
         if node_id is None:
             return
-        self.growth_started_at[node_id] = frame
+        self.growth_pulses[node_id] = GrowthPulse(
+            node_id=node_id,
+            start_frame=frame,
+            duration_frames=config.CLOUD_TAP_PULSE_DURATION_FRAMES,
+            strength_level=config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[0],
+            graph_distance=0,
+        )
+
+    def trigger_growth_wave(
+        self,
+        state: CloudState,
+        node_id: int | None,
+        frame: int,
+    ) -> None:
+        if node_id is None or node_id not in state.nodes:
+            return
+        for target_id, distance in graph_distances(
+            state,
+            node_id,
+            config.CLOUD_PULSE_PROPAGATION_MAX_DISTANCE,
+        ).items():
+            node = state.nodes.get(target_id)
+            if node is None or node.is_pruning or node.fade <= 0.0:
+                continue
+            strength = config.CLOUD_PULSE_STRENGTH_BY_DISTANCE[
+                min(distance, len(config.CLOUD_PULSE_STRENGTH_BY_DISTANCE) - 1)
+            ]
+            self.growth_pulses[target_id] = GrowthPulse(
+                node_id=target_id,
+                start_frame=frame + distance * config.CLOUD_PULSE_PROPAGATION_DELAY_FRAMES,
+                duration_frames=config.CLOUD_TAP_PULSE_DURATION_FRAMES,
+                strength_level=strength,
+                graph_distance=distance,
+            )
 
     def growth_level(self, node_id: int, frame: int, growth_ease: bytes) -> int:
-        started_at = self.growth_started_at.get(node_id)
-        if started_at is None:
+        pulse = self.growth_pulses.get(node_id)
+        if pulse is None:
             return 0
-        age = frame - started_at
+        age = frame - pulse.start_frame
         if age < 0 or age >= len(growth_ease):
             return 0
-        return growth_ease[age]
+        return int(round(growth_ease[age] * pulse.strength_level / 10.0))
+
+    def response_blocks_ambient(self, node_id: int, frame: int) -> bool:
+        pulse = self.growth_pulses.get(node_id)
+        if pulse is None:
+            return False
+        block_start = pulse.start_frame - config.CLOUD_PULSE_PROPAGATION_DELAY_FRAMES
+        block_end = (
+            pulse.start_frame
+            + pulse.duration_frames
+            + config.POST_RESPONSE_AMBIENT_COOLDOWN_FRAMES
+        )
+        return block_start <= frame < block_end
 
     def active_morph_node_ids(self) -> tuple[int, ...]:
         node_ids: list[int] = []
@@ -108,6 +167,13 @@ class WeatherMotionRuntime:
             return None
         return min(frames)
 
+    def growth_pulse_count(self, frame: int) -> int:
+        return sum(
+            1
+            for pulse in self.growth_pulses.values()
+            if pulse.start_frame <= frame < pulse.start_frame + pulse.duration_frames
+        )
+
 
 def hysteresis_step(current: int, raw: int, enter: int, exit: int) -> int:
     if current == 0:
@@ -121,6 +187,29 @@ def hysteresis_step(current: int, raw: int, enter: int, exit: int) -> int:
     if current == -1 and raw > -exit:
         return 0
     return current
+
+
+def graph_distances(state: CloudState, origin_node_id: int, max_distance: int) -> dict[int, int]:
+    if origin_node_id not in state.nodes:
+        return {}
+    adjacency: dict[int, set[int]] = {node_id: set() for node_id in state.nodes}
+    for edge in state.live_edges():
+        adjacency.setdefault(edge.node_a, set()).add(edge.node_b)
+        adjacency.setdefault(edge.node_b, set()).add(edge.node_a)
+
+    distances = {origin_node_id: 0}
+    frontier = [origin_node_id]
+    while frontier:
+        current = frontier.pop(0)
+        next_distance = distances[current] + 1
+        if next_distance > max_distance:
+            continue
+        for neighbor in sorted(adjacency.get(current, ())):
+            if neighbor in distances:
+                continue
+            distances[neighbor] = next_distance
+            frontier.append(neighbor)
+    return distances
 
 
 def initial_morph_frame(cluster_key: int, motion_state: int) -> int:

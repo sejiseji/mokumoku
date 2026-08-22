@@ -227,19 +227,15 @@ def build_cloud_shape_bank(phase_count: int, group_count: int, seed: int) -> byt
 
 def build_cloud_growth_ease() -> bytes:
     levels = bytearray()
-    peak_frame = max(1, config.CLOUD_GROWTH_PEAK_FRAME)
-    settle_frame = max(peak_frame + 1, config.CLOUD_GROWTH_SETTLE_FRAME)
-    final_frame = max(settle_frame + 1, config.CLOUD_GROWTH_EASE_FRAMES - 1)
+    attack_frame = max(1, config.CLOUD_TAP_PULSE_ATTACK_FRAMES)
+    final_frame = max(attack_frame + 1, config.CLOUD_TAP_PULSE_DURATION_FRAMES)
     for frame in range(config.CLOUD_GROWTH_EASE_FRAMES):
-        if frame <= peak_frame:
-            t = frame / peak_frame
+        if frame <= attack_frame:
+            t = frame / attack_frame
             value = 10.0 * ease_out_sine(t)
-        elif frame <= settle_frame:
-            t = (frame - peak_frame) / (settle_frame - peak_frame)
-            value = 10.0 - 3.0 * smoothstep(t)
         else:
-            t = (frame - settle_frame) / (final_frame - settle_frame)
-            value = 7.0 * (1.0 - smoothstep(t))
+            t = (frame - attack_frame) / (final_frame - attack_frame)
+            value = 10.0 * (1.0 - smoothstep(t))
         levels.append(clamp_int(int(round(value)), 0, 10))
     levels[0] = 0
     levels[-1] = 0

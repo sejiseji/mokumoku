@@ -2,7 +2,9 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A4 Foundation + A4.5 Cloud Cohesion 初期パスです。A0〜A4 基盤に加えて、通常表示の接続線非表示、雲ブリッジ、投影ベースのスプライト役割判定、小さい単体雲のメッシュ風描画、スマホ用カメラボタン、まとまった雲ほど残りやすい熟成保持を実装しています。
+現在の実装範囲は Prototype A4 Foundation + A4.5 Cloud Cohesion / Quiet Motion Pass です。A0〜A4 基盤に加えて、通常表示の接続線非表示、雲ブリッジ、投影ベースのスプライト役割判定、小さい単体雲のメッシュ風描画、スマホ用カメラボタン、まとまった雲ほど残りやすい熟成保持を実装しています。
+
+Quiet Motion Pass では、Ambient時のノード中心移動とサイズpulseを止め、外縁ノードだけを疎にsprite variant morphさせます。タップ、長押し、ドラッグ開始、フリックの反応は一回性のGrowthPulseとして扱い、グラフ距離2まで遅延伝播します。
 
 ## Requirements
 
