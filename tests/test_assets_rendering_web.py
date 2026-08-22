@@ -196,7 +196,11 @@ class AssetsRenderingWebTests(unittest.TestCase):
         parent = simulation.state.nodes[result.node_id]
         projection = project_point(parent.position, camera)
 
-        child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        child = simulation.tap_screen(
+            projection.screen_x + config.DORMANT_SEED_TAP_RADIUS_PX - 4.0,
+            projection.screen_y,
+            camera,
+        )
         child_id = first_spawned_node_id(child)
         child_node = simulation.state.nodes[child_id]
         child_projection = project_point(child_node.position, camera)

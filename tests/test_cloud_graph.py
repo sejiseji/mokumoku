@@ -16,6 +16,10 @@ def first_spawned_node_id(result) -> int:
     return result.spawned_node_ids[0]
 
 
+def seed_stimulus_x(projection) -> float:
+    return projection.screen_x + config.DORMANT_SEED_TAP_RADIUS_PX - 4.0
+
+
 class CloudGraphTests(unittest.TestCase):
     def make_simulation(self) -> tuple[CloudSimulation, object]:
         simulation = CloudSimulation(RandomSource(12345))
@@ -52,6 +56,25 @@ class CloudGraphTests(unittest.TestCase):
         self.assertAlmostEqual(projection.screen_x, 300.0, delta=1.0)
         self.assertAlmostEqual(projection.screen_y, 80.0, delta=1.0)
 
+    def test_second_blank_tap_inside_resonance_radius_stays_at_tap_position(self) -> None:
+        simulation, camera, node_id = self.seed_cloud()
+        first_projection = project_point(simulation.state.nodes[node_id].position, camera)
+        tap_x = first_projection.screen_x + config.DORMANT_SEED_TAP_RADIUS_PX + 18.0
+        tap_y = first_projection.screen_y
+        self.assertLess(
+            tap_x - first_projection.screen_x,
+            config.SEED_RESONANCE_RADIUS_PX,
+        )
+
+        result = simulation.tap_screen(tap_x, tap_y, camera)
+
+        self.assertEqual(result.kind, "seed")
+        self.assertIsNotNone(result.node_id)
+        self.assertEqual(len(result.spawned_node_ids), 0)
+        projection = project_point(simulation.state.nodes[result.node_id].position, camera)
+        self.assertAlmostEqual(projection.screen_x, tap_x, delta=1.0)
+        self.assertAlmostEqual(projection.screen_y, tap_y, delta=1.0)
+
     def test_tap_on_node_grows_local_node(self) -> None:
         simulation, camera, node_id = self.seed_cloud()
         node = simulation.state.nodes[node_id]
@@ -70,7 +93,7 @@ class CloudGraphTests(unittest.TestCase):
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
 
-        result = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        result = simulation.tap_screen(seed_stimulus_x(projection), projection.screen_y, camera)
 
         self.assertEqual(result.kind, "stimulus")
         self.assertGreaterEqual(len(result.spawned_node_ids), 1)
@@ -82,7 +105,7 @@ class CloudGraphTests(unittest.TestCase):
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
 
-        result = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        result = simulation.tap_screen(seed_stimulus_x(projection), projection.screen_y, camera)
         self.assertGreaterEqual(len(result.spawned_node_ids), 1)
         edge = next(iter(simulation.state.edges.values()))
 
@@ -99,7 +122,7 @@ class CloudGraphTests(unittest.TestCase):
     def test_edge_cohesion_pulls_connected_nodes_toward_overlap(self) -> None:
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
-        child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        child = simulation.tap_screen(seed_stimulus_x(projection), projection.screen_y, camera)
         child_id = first_spawned_node_id(child)
         parent = simulation.state.nodes[node_id]
         child_node = simulation.state.nodes[child_id]
@@ -141,7 +164,7 @@ class CloudGraphTests(unittest.TestCase):
     def test_overstretched_edge_splits_cluster_with_same_lineage(self) -> None:
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
-        child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        child = simulation.tap_screen(seed_stimulus_x(projection), projection.screen_y, camera)
         child_id = first_spawned_node_id(child)
         child_node = simulation.state.nodes[child_id]
         child_projection = project_point(child_node.position, camera)
@@ -162,7 +185,7 @@ class CloudGraphTests(unittest.TestCase):
     def test_flick_splits_selected_node_from_cluster(self) -> None:
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
-        child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        child = simulation.tap_screen(seed_stimulus_x(projection), projection.screen_y, camera)
         child_id = first_spawned_node_id(child)
 
         result = simulation.flick_node(child_id, Vec3(500.0, 0.0, 0.0))
@@ -174,7 +197,7 @@ class CloudGraphTests(unittest.TestCase):
     def test_near_slow_fragments_merge_and_preserve_lineage_history(self) -> None:
         simulation, camera, node_id = self.seed_cloud()
         projection = project_point(simulation.state.nodes[node_id].position, camera)
-        child = simulation.tap_screen(projection.screen_x + 36.0, projection.screen_y, camera)
+        child = simulation.tap_screen(seed_stimulus_x(projection), projection.screen_y, camera)
         child_id = first_spawned_node_id(child)
         lineage = simulation.state.active_lineage()
         self.assertIsNotNone(lineage)

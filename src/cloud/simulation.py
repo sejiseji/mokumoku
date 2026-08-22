@@ -159,7 +159,7 @@ class CloudSimulation:
                 screen_x,
                 screen_y,
                 camera,
-                max_distance=config.SEED_RESONANCE_RADIUS_PX,
+                max_distance=config.DORMANT_SEED_TAP_RADIUS_PX,
             )
             if seed is not None:
                 return self.stimulate_node(seed, screen_x, screen_y, camera)
