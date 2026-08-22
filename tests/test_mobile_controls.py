@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from src import config
-from src.app import camera_button_direction_at, camera_buttons
+from src.app import camera_button_direction_at, camera_buttons, should_draw_edge_payload
 
 
 class MobileControlsTests(unittest.TestCase):
@@ -17,6 +17,10 @@ class MobileControlsTests(unittest.TestCase):
 
     def test_camera_button_hit_areas_ignore_cloud_region(self) -> None:
         self.assertIsNone(camera_button_direction_at(160.0, 190.0))
+
+    def test_edge_payloads_are_hidden_outside_debug_display(self) -> None:
+        self.assertFalse(should_draw_edge_payload(debug_enabled=False))
+        self.assertTrue(should_draw_edge_payload(debug_enabled=True))
 
 
 if __name__ == "__main__":

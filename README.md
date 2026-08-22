@@ -2,7 +2,7 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A4 Foundation + A4.5 Quiet Motion Pass + A4.6 Cloud Cohesion Polish + A4.7 Touch Response Pass + A4.8 Maturation / Settlement です。A0〜A4 基盤に加えて、通常表示の接続線非表示、雲ブリッジ、投影ベースのスプライト役割判定、小さい単体雲のメッシュ風描画、スマホ用カメラボタン、まとまった雲ほど残りやすい熟成保持を実装しています。
+現在の実装範囲は Prototype A5 Acceptance です。A0〜A4.8 基盤に加えて、通常表示の接続線非表示、雲ブリッジ、投影ベースのスプライト役割判定、小さい単体雲のメッシュ風描画、スマホ用カメラボタン、まとまった雲ほど残りやすい熟成保持、入力別のタッチ反応を実装しています。
 
 Quiet Motion Pass では、Ambient時のノード中心移動とサイズpulseを止め、外縁ノードだけを疎にsprite variant morphさせます。タップ、長押し、ドラッグ開始、フリックの反応は一回性のGrowthPulseとして扱い、グラフ距離2まで遅延伝播します。
 
@@ -11,6 +11,8 @@ Cloud Cohesion Polish では、接続タップ時の初期距離を短くし、�
 Touch Response Pass では、タップ、ドラッグ開始、ドラッグ保持、長押し、リリースを別々の入力反応として扱います。Ambientの揺れは増やさず、入力時だけ局所的な成長・伸び・凝縮・戻りの描画を発火します。
 
 Maturation / Settlement では、成熟してまとまった接続ノードの減衰をさらに抑え、弱い孤立断片や保持度の低い葉ノードは自然に薄くなりやすくしています。放置時はノイズが落ち、settledな雲ほど静かに残ります。
+
+Prototype A5 Acceptance では、5〜8ノードの接続雲、全カメラでのタップ位置整合、30秒放置時のAmbient中心静止、通常表示のエッジ非表示を自動検査する受け入れシナリオを追加しています。
 
 ## Requirements
 
@@ -57,6 +59,12 @@ python main.py --headless --smoke-frames 5
 
 ```bash
 python3 -m unittest discover -s tests
+```
+
+Prototype A 受け入れシナリオだけを確認する場合:
+
+```bash
+python3 scripts/check_prototype_a_acceptance.py
 ```
 
 ## Web Build

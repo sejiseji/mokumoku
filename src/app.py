@@ -79,6 +79,10 @@ def camera_button_direction_at(screen_x: float, screen_y: float) -> int | None:
     return None
 
 
+def should_draw_edge_payload(debug_enabled: bool) -> bool:
+    return debug_enabled
+
+
 class MokumokuApp:
     """Pyxel app shell.
 
@@ -306,7 +310,7 @@ class MokumokuApp:
         )
         self.draw_cloud()
         self.draw_camera_buttons()
-        pyxel.text(8, 8, "MOKUMOKU Prototype A4.8", config.COLOR_UI)
+        pyxel.text(8, 8, "MOKUMOKU Prototype A5", config.COLOR_UI)
         pyxel.text(
             8,
             18,
@@ -340,7 +344,7 @@ class MokumokuApp:
             self.motion_runtime,
         ):
             if isinstance(item.payload, EdgePayload):
-                if self.debug_enabled:
+                if should_draw_edge_payload(self.debug_enabled):
                     self.draw_edge_payload(item.payload)
             elif isinstance(item.payload, BridgePayload):
                 self.draw_bridge_payload(item.payload)
