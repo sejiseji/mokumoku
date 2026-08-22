@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 RESOURCE_PATH = PROJECT_ROOT / "assets" / "mokumoku.pyxres"
 
 
-def draw_blob(image, x: int, y: int, size: int, family) -> None:
+def draw_blob(image, x: int, y: int, size: int, family, variant: int = 0) -> None:
     from src.assets.sprite_map import CloudSpriteFamily
 
     cx = x + size // 2
@@ -37,6 +37,8 @@ def draw_blob(image, x: int, y: int, size: int, family) -> None:
         puffs: tuple[tuple[int, int, int], ...] = (),
         cuts: tuple[tuple[int, int, int], ...] = (),
     ) -> None:
+        puffs = morph_puffs(puffs, variant)
+        cuts = morph_cuts(cuts, variant)
         for px, py, radius in puffs:
             puff(px, py, radius + 1, base)
         for px, py, radius in puffs:
@@ -44,6 +46,32 @@ def draw_blob(image, x: int, y: int, size: int, family) -> None:
         for px, py, radius in cuts:
             cut(px, py, radius)
         mark(-3, -3, accent)
+
+    def morph_puffs(
+        puffs: tuple[tuple[int, int, int], ...],
+        variant: int,
+    ) -> tuple[tuple[int, int, int], ...]:
+        if variant == 1:
+            return tuple(
+                (px + (1 if index % 2 == 0 else 0), py - (1 if index % 3 == 0 else 0), radius)
+                for index, (px, py, radius) in enumerate(puffs)
+            )
+        if variant == 2:
+            return tuple(
+                (px - (1 if index % 2 == 1 else 0), py + (1 if index % 3 == 1 else 0), radius)
+                for index, (px, py, radius) in enumerate(puffs)
+            )
+        return puffs
+
+    def morph_cuts(
+        cuts: tuple[tuple[int, int, int], ...],
+        variant: int,
+    ) -> tuple[tuple[int, int, int], ...]:
+        if variant == 1:
+            return tuple((px + 1, py, radius) for px, py, radius in cuts)
+        if variant == 2:
+            return tuple((px - 1, py + 1, radius) for px, py, radius in cuts)
+        return cuts
 
     if family is CloudSpriteFamily.INTERNAL:
         lumpy(
@@ -119,17 +147,24 @@ def draw_blob(image, x: int, y: int, size: int, family) -> None:
 
 
 def generate_resource() -> Path:
-    from src.assets.sprite_map import CLOUD_SIZE_ORDER, CloudSpriteFamily, cloud_sprite_rect
+    from src.assets.sprite_map import (
+        CLOUD_SIZE_ORDER,
+        CLOUD_SPRITE_VARIANT_COUNT,
+        CloudSpriteFamily,
+        cloud_sprite_rect,
+    )
 
     RESOURCE_PATH.parent.mkdir(parents=True, exist_ok=True)
     pyxel.init(256, 256, title="mokumoku resource generator", headless=True)
-    image = pyxel.images[0]
-    image.cls(0)
+    for variant in range(CLOUD_SPRITE_VARIANT_COUNT):
+        pyxel.images[variant].cls(0)
 
-    for family in CloudSpriteFamily:
-        for size_class in CLOUD_SIZE_ORDER:
-            rect = cloud_sprite_rect(family, size_class)
-            draw_blob(image, rect.u, rect.v, rect.width, family)
+    for variant in range(CLOUD_SPRITE_VARIANT_COUNT):
+        image = pyxel.images[variant]
+        for family in CloudSpriteFamily:
+            for size_class in CLOUD_SIZE_ORDER:
+                rect = cloud_sprite_rect(family, size_class, variant)
+                draw_blob(image, rect.u, rect.v, rect.width, family, variant)
 
     pyxel.save(
         str(RESOURCE_PATH),

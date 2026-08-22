@@ -14,7 +14,12 @@ from src.motion.cloud_motion import (
     cloud_shape_level,
 )
 from src.motion.quantize import unpack_signed
-from src.motion.runtime import WeatherMotionRuntime, hysteresis_step
+from src.motion.runtime import (
+    WeatherMotionRuntime,
+    choose_morph_node_ids,
+    hysteresis_step,
+    morph_interval_bounds,
+)
 from src.rng import RandomSource
 
 
@@ -128,6 +133,53 @@ class MotionAtlasTests(unittest.TestCase):
         self.assertEqual(
             runtime.growth_level(7, 100 + len(atlas.cloud_growth_ease), atlas.cloud_growth_ease),
             0,
+        )
+
+    def test_sparse_morph_selection_respects_state_ratio_and_absolute_cap(self) -> None:
+        active_nodes = choose_morph_node_ids(
+            99,
+            0,
+            tuple(range(1, 21)),
+            int(CloudMotionState.ACTIVE),
+            20,
+        )
+        mature_nodes = choose_morph_node_ids(
+            99,
+            0,
+            tuple(range(1, 21)),
+            int(CloudMotionState.MATURE),
+            20,
+        )
+
+        self.assertLessEqual(len(active_nodes), config.CLOUD_AMBIENT_MORPH_MAX_NODES)
+        self.assertLessEqual(len(active_nodes), 4)
+        self.assertLessEqual(len(mature_nodes), 2)
+        self.assertGreaterEqual(len(active_nodes), len(mature_nodes))
+
+    def test_sparse_morph_intervals_get_longer_as_cloud_settles(self) -> None:
+        active = morph_interval_bounds(int(CloudMotionState.ACTIVE))
+        settling = morph_interval_bounds(int(CloudMotionState.SETTLING))
+        mature = morph_interval_bounds(int(CloudMotionState.MATURE))
+
+        self.assertLess(active[0], settling[0])
+        self.assertLess(settling[0], mature[0])
+        self.assertLess(active[1], settling[1])
+        self.assertLess(settling[1], mature[1])
+
+    def test_sparse_morph_runtime_is_deterministic(self) -> None:
+        first = WeatherMotionRuntime()
+        second = WeatherMotionRuntime()
+        kwargs = {
+            "cluster_key": 17,
+            "candidate_node_ids": tuple(range(1, 10)),
+            "frame": 1000,
+            "motion_state": int(CloudMotionState.ACTIVE),
+            "node_count": 9,
+        }
+
+        self.assertEqual(
+            first.ambient_morph_variants(**kwargs),
+            second.ambient_morph_variants(**kwargs),
         )
 
     def test_weather_motion_atlas_is_deterministic_by_seed(self) -> None:

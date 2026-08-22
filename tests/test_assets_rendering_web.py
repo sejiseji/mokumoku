@@ -8,7 +8,12 @@ from pathlib import Path
 import pyxel
 from scripts.build_web import disable_virtual_gamepad, prune_versioned_builds, write_build_info
 from src import config
-from src.assets.sprite_map import CloudSpriteFamily, cloud_sprite_rect, size_class_for_screen_radius
+from src.assets.sprite_map import (
+    CLOUD_SPRITE_VARIANT_COUNT,
+    CloudSpriteFamily,
+    cloud_sprite_rect,
+    size_class_for_screen_radius,
+)
 from src.camera.camera import build_camera_basis
 from src.camera.projection import project_point
 from src.cloud.graph import add_edge, create_node, recompute_clusters
@@ -16,6 +21,7 @@ from src.cloud.rendering import (
     BridgePayload,
     EdgePayload,
     NodePayload,
+    ambient_morph_priority,
     choose_cloud_sprite_family,
     cloud_node_wobble,
     collect_cloud_render_items,
@@ -32,16 +38,36 @@ from src.rng import RandomSource
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def ensure_headless_pyxel() -> None:
+    if pyxel.width == 0:
+        pyxel.init(16, 16, headless=True)
+
+
 class AssetsRenderingWebTests(unittest.TestCase):
     def test_cloud_resource_exists_and_loads_in_headless_pyxel(self) -> None:
         resource_path = PROJECT_ROOT / "assets" / "mokumoku.pyxres"
 
         self.assertTrue(resource_path.exists())
-        pyxel.init(16, 16, headless=True)
+        ensure_headless_pyxel()
         pyxel.load(str(resource_path))
 
         rect = cloud_sprite_rect(CloudSpriteFamily.INTERNAL, "s")
         self.assertNotEqual(pyxel.images[rect.image].pget(rect.u + 8, rect.v + 8), 0)
+
+    def test_cloud_resource_variants_share_anchor_and_load(self) -> None:
+        resource_path = PROJECT_ROOT / "assets" / "mokumoku.pyxres"
+        ensure_headless_pyxel()
+        pyxel.load(str(resource_path))
+
+        base = cloud_sprite_rect(CloudSpriteFamily.EDGE, "m", 0)
+        for variant in range(CLOUD_SPRITE_VARIANT_COUNT):
+            rect = cloud_sprite_rect(CloudSpriteFamily.EDGE, "m", variant)
+            self.assertEqual((rect.u, rect.v, rect.width, rect.height), (base.u, base.v, 24, 24))
+            self.assertEqual(rect.image, variant)
+            self.assertNotEqual(pyxel.images[rect.image].pget(rect.u + 12, rect.v + 12), 0)
+
+        with self.assertRaises(ValueError):
+            cloud_sprite_rect(CloudSpriteFamily.EDGE, "m", CLOUD_SPRITE_VARIANT_COUNT)
 
     def test_size_class_uses_discrete_sprite_sizes(self) -> None:
         self.assertEqual(size_class_for_screen_radius(9.0), "s")
@@ -315,7 +341,7 @@ class AssetsRenderingWebTests(unittest.TestCase):
             {(0.0, 0.0)},
         )
 
-    def test_motion_atlas_does_not_change_size_or_shape_in_quiet_ambient(self) -> None:
+    def test_motion_atlas_does_not_change_size_class_in_quiet_ambient(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=12345)
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)
@@ -336,8 +362,52 @@ class AssetsRenderingWebTests(unittest.TestCase):
                 next(item.payload for item in items if isinstance(item.payload, NodePayload))
             )
 
-        self.assertEqual({payload.sprite for payload in payloads}, {payloads[0].sprite})
-        self.assertEqual({payload.shape_level for payload in payloads}, {0})
+        sprite_shapes = {
+            (payload.sprite.u, payload.sprite.v, payload.sprite.width, payload.sprite.height)
+            for payload in payloads
+        }
+        expected_shape = (
+            payloads[0].sprite.u,
+            payloads[0].sprite.v,
+            payloads[0].sprite.width,
+            payloads[0].sprite.height,
+        )
+        self.assertEqual(sprite_shapes, {expected_shape})
+
+    def test_sparse_ambient_morph_excludes_internal_nodes(self) -> None:
+        self.assertIsNone(ambient_morph_priority(CloudSpriteFamily.INTERNAL))
+        self.assertIsNone(ambient_morph_priority(CloudSpriteFamily.FADE))
+        self.assertIsNotNone(ambient_morph_priority(CloudSpriteFamily.EDGE))
+
+    def test_sparse_ambient_morph_uses_limited_sprite_variants(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=12345)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        parent = simulation.state.nodes[result.node_id]
+        projection = project_point(parent.position, camera)
+        child = simulation.tap_screen(projection.screen_x + 30.0, projection.screen_y, camera)
+        self.assertIsNotNone(child.node_id)
+
+        runtime = WeatherMotionRuntime()
+        variant_counts: list[int] = []
+        for frame in range(0, config.FPS * 5):
+            items = collect_cloud_render_items(
+                simulation.state,
+                camera,
+                frame=frame,
+                motion_atlas=atlas,
+                motion_runtime=runtime,
+            )
+            payloads = [
+                item.payload for item in items if isinstance(item.payload, NodePayload)
+            ]
+            variant_count = sum(1 for payload in payloads if payload.sprite.image > 0)
+            variant_counts.append(variant_count)
+
+        self.assertGreater(max(variant_counts), 0)
+        self.assertLessEqual(max(variant_counts), 1)
 
     def test_growth_event_level_is_added_to_node_payload(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=12345)

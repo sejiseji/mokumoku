@@ -488,6 +488,15 @@ class MokumokuApp:
             f"cluster offset {int(config.ENABLE_CLUSTER_AMBIENT_OFFSET)}",
             config.COLOR_UI,
         )
+        active_morphs = self.motion_runtime.active_morph_node_ids()
+        next_morph = self.motion_runtime.next_morph_event_frame()
+        next_text = "-" if next_morph is None else str(next_morph)
+        pyxel.text(
+            8,
+            110,
+            f"morph {list(active_morphs[:3])} next {next_text}",
+            config.COLOR_UI,
+        )
 
 
 def run(seed: int = 12345, headless: bool = False, smoke_frames: int | None = None) -> None:

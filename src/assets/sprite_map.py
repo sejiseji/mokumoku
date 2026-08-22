@@ -33,16 +33,23 @@ CLOUD_SIZE_PIXELS = {
     "l": 32,
     "xl": 40,
 }
+CLOUD_SPRITE_VARIANT_COUNT = 3
 
 
-def cloud_sprite_rect(family: CloudSpriteFamily, size_class: str) -> SpriteRect:
+def cloud_sprite_rect(
+    family: CloudSpriteFamily,
+    size_class: str,
+    variant: int = 0,
+) -> SpriteRect:
     if size_class not in CLOUD_SIZE_PIXELS:
         raise ValueError(f"unknown cloud size class: {size_class}")
+    if not 0 <= variant < CLOUD_SPRITE_VARIANT_COUNT:
+        raise ValueError(f"unknown cloud sprite variant: {variant}")
     size_index = CLOUD_SIZE_ORDER.index(size_class)
     family_index = list(CloudSpriteFamily).index(family)
     size = CLOUD_SIZE_PIXELS[size_class]
     return SpriteRect(
-        image=0,
+        image=variant,
         u=size_index * 48,
         v=family_index * 48,
         width=size,

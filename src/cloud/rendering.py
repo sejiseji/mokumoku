@@ -15,7 +15,7 @@ from src.camera.projection import ProjectedPoint, project_point
 from src.cloud.model import CloudEdge, CloudNode, CloudState
 from src.enums import EdgeKind
 from src.motion.atlas import WeatherMotionAtlas
-from src.motion.cloud_motion import cloud_render_offset
+from src.motion.cloud_motion import cloud_motion_state_for_node, cloud_render_offset, cluster_seed
 from src.motion.runtime import WeatherMotionRuntime
 
 
@@ -62,6 +62,15 @@ def collect_cloud_render_items(
     motion_runtime: WeatherMotionRuntime | None = None,
 ) -> list[RenderItem]:
     items: list[RenderItem] = []
+    morph_variants: dict[int, int] = {}
+    if motion_atlas is not None and motion_runtime is not None:
+        morph_variants = collect_ambient_morph_variants(
+            state,
+            camera,
+            frame,
+            motion_runtime,
+        )
+
     for edge in state.live_edges():
         node_a = state.nodes[edge.node_a]
         node_b = state.nodes[edge.node_b]
@@ -102,7 +111,6 @@ def collect_cloud_render_items(
         size_class = size_class_for_screen_radius(screen_radius)
         if motion_atlas is None:
             offset_x, offset_y, _radius_ratio = cloud_node_wobble(node, state, frame)
-            shape_level = 0
             growth_level = 0
         else:
             offset_x, offset_y, _radius_ratio = cloud_render_offset(
@@ -113,7 +121,6 @@ def collect_cloud_render_items(
                 motion_runtime,
                 size_class,
             )
-            shape_level = 0
             if motion_runtime is None:
                 growth_level = 0
             else:
@@ -124,9 +131,12 @@ def collect_cloud_render_items(
                 )
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
         mesh_phase = single_node_mesh_phase(node, frame)
+        family = choose_cloud_sprite_family(node, state, camera, projection)
+        morph_variant = morph_variants.get(node.id, 0)
         sprite = cloud_sprite_rect(
-            choose_cloud_sprite_family(node, state, camera, projection),
+            family,
             size_class_for_screen_radius(screen_radius * max(0.45, node.fade)),
+            morph_variant,
         )
         items.append(
             RenderItem(
@@ -141,7 +151,7 @@ def collect_cloud_render_items(
                     offset_y,
                     mesh_intensity,
                     mesh_phase,
-                    shape_level,
+                    morph_variant,
                     growth_level,
                 ),
             )
@@ -149,6 +159,59 @@ def collect_cloud_render_items(
 
     items.sort(key=lambda item: (-item.depth, item.layer_bias, item.stable_id))
     return items
+
+
+def collect_ambient_morph_variants(
+    state: CloudState,
+    camera: CameraBasis,
+    frame: int,
+    motion_runtime: WeatherMotionRuntime,
+) -> dict[int, int]:
+    cluster_candidates: dict[int, list[tuple[int, int]]] = {}
+    cluster_states: dict[int, int] = {}
+    cluster_counts: dict[int, int] = {}
+    for node in state.live_nodes():
+        projection = project_point(node.position, camera)
+        if not projection.visible:
+            continue
+        family = choose_cloud_sprite_family(node, state, camera, projection)
+        priority = ambient_morph_priority(family)
+        cluster_counts[node.cluster_id] = cluster_counts.get(node.cluster_id, 0) + 1
+        motion_state = int(cloud_motion_state_for_node(node))
+        cluster_states[node.cluster_id] = min(
+            motion_state,
+            cluster_states.get(node.cluster_id, motion_state),
+        )
+        if priority is None:
+            continue
+        cluster_candidates.setdefault(node.cluster_id, []).append((priority, node.id))
+
+    variants: dict[int, int] = {}
+    for cluster_id, candidates in cluster_candidates.items():
+        sorted_candidates = tuple(
+            node_id for _priority, node_id in sorted(candidates, key=lambda item: item)
+        )
+        representative = state.nodes[sorted_candidates[0]]
+        variants.update(
+            motion_runtime.ambient_morph_variants(
+                cluster_seed(representative),
+                sorted_candidates,
+                frame,
+                cluster_states.get(cluster_id, int(cloud_motion_state_for_node(representative))),
+                cluster_counts.get(cluster_id, len(sorted_candidates)),
+            )
+        )
+    return variants
+
+
+def ambient_morph_priority(family: CloudSpriteFamily) -> int | None:
+    if family is CloudSpriteFamily.UPDRAFT:
+        return 0
+    if family in (CloudSpriteFamily.EDGE, CloudSpriteFamily.STRETCH, CloudSpriteFamily.FRAGMENT):
+        return 1
+    if family is CloudSpriteFamily.BOTTOM:
+        return 2
+    return None
 
 
 def cloud_bridge_payloads(
