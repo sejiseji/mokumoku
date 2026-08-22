@@ -2,7 +2,7 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A6 Cloud Reaction です。A0〜A5 基盤に加えて、既存雲へのタップを単純な1ノード追加ではなく CloudStimulus として処理し、Neighbor Pulse、Secondary Sprout、Seed Resonance を一回性イベントとして実装しています。
+現在の実装範囲は Prototype A7 Density-Adaptive Radial Reaction です。A0〜A6 基盤に加えて、静止した押下/リリースを一点追加ではなく反応波として処理し、押下時間と周辺密度に応じて既存雲の反応、Dormant Seed共鳴、副次発芽、放射状の新規Seed生成を選び分けます。
 
 Quiet Motion Pass では、Ambient時のノード中心移動とサイズpulseを止め、外縁ノードだけを疎にsprite variant morphさせます。タップ、長押し、ドラッグ開始、フリックの反応は一回性のGrowthPulseとして扱い、グラフ距離2まで遅延伝播します。
 
@@ -14,7 +14,7 @@ Maturation / Settlement では、成熟してまとまった接続ノードの�
 
 Prototype A5 Acceptance では、5〜8ノードの接続雲、全カメラでのタップ位置整合、30秒放置時のAmbient中心静止、通常表示のエッジ非表示を自動検査する受け入れシナリオを追加しています。
 
-Cloud Reaction System では、完全な空白タップだけDormant Seedを1個作り、既存雲や近くの種へのタップは刺激として扱います。触れた雲房が即時反応し、隣接ノードへ数フレーム遅れて伝播し、条件に応じて子ノードが副次発芽し、周辺のDormant Seedが距離に応じて遅れて共鳴します。反応には世代数、反応ノード数、発芽数、共鳴数、イベント数の予算を持たせ、終了後はQuiet Motionへ戻ります。
+Cloud Reaction System では、短い押下は小さく集中した反応、長い押下は広く弱い放射反応として扱います。疎な空では反応円内へSeedを複数配置し、混在領域ではSeed生成・共鳴・既存雲の成長を組み合わせ、密な雲ではSeed生成を抑えて既存ノードの反応とグラフ伝播を優先します。反応には生成数、反応ノード数、発芽数、共鳴数、イベント数、継続時間の予算を持たせ、終了後はQuiet Motionへ戻ります。
 
 ## Requirements
 
@@ -45,10 +45,10 @@ python main.py --headless --smoke-frames 5
 - `E`: 右カメラへ
 - `C`: カメラ循環
 - 地上の `<` / `>`: 左右カメラへ
-- 完全な空をタップ: Dormant Seedを作る
-- 雲をタップ: 刺激、遅延伝播、副次発芽
-- 近くのDormant Seed: 刺激や周辺雲から遅れて共鳴
-- 雲を長押し: 局所凝縮
+- 空で短く押して離す: 中心にDormant Seedを作る
+- 空で長く押して離す: 反応円内に複数のDormant Seedを放射状に作る
+- 雲で押して離す: 周辺密度に応じて刺激、遅延伝播、副次発芽
+- 近くのDormant Seed: 反応波から距離に応じて遅れて共鳴
 - 雲をドラッグ: 観察平面上で変形
 - 雲をフリック: 断片へ分裂
 - 分裂した断片を近づける: 合流

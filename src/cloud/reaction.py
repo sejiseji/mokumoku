@@ -15,6 +15,24 @@ class ReactionEventKind(Enum):
     NODE_PULSE = auto()
     SECONDARY_SPROUT = auto()
     SEED_IGNITION = auto()
+    VISUAL_WAVE_HIT = auto()
+    GROW_EXISTING = auto()
+    IGNITE_DORMANT = auto()
+    CREATE_SEED = auto()
+    GRAPH_NODE_PULSE = auto()
+
+
+class RadialActionKind(Enum):
+    PULSE_EXISTING = auto()
+    GROW_EXISTING = auto()
+    IGNITE_DORMANT = auto()
+    CREATE_SEED = auto()
+
+
+class RadialZone(Enum):
+    CORE = auto()
+    MIDDLE = auto()
+    OUTER = auto()
 
 
 class ReactionGrade(Enum):
@@ -74,6 +92,29 @@ class ReactionSummary:
     highest_generation: int
     duration_frames: int
     reaction_grade: ReactionGrade
+    charge_level: float = 0.0
+    max_radius_px: float = 0.0
+    local_density: float = 0.0
+    visual_hits: int = 0
+    productive_hits: int = 0
+    created_seeds: int = 0
+    secondary_sprouts: int = 0
+
+
+@dataclass(slots=True, frozen=True)
+class RadialActionPlan:
+    action_kind: RadialActionKind
+    target_node_id: int | None
+    source_node_id: int | None
+    screen_x: float
+    screen_y: float
+    world_position: Vec3
+    normalized_radius: float
+    radial_strength: float
+    effective_strength: float
+    execute_frame: int
+    zone: RadialZone
+    generation: int = 0
 
 
 def clamp01(value: float) -> float:
@@ -103,6 +144,69 @@ def stable_range(lower: int, upper: int, *parts: int) -> int:
     if upper <= lower:
         return lower
     return lower + stable_hash(*parts) % (upper - lower + 1)
+
+
+def charge_level(hold_seconds: float) -> float:
+    span = config.REACTION_CHARGE_FULL_SECONDS - config.REACTION_CHARGE_START_SECONDS
+    if span <= 0.0:
+        return 1.0
+    t = (hold_seconds - config.REACTION_CHARGE_START_SECONDS) / span
+    t = clamp01(t)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def reaction_radius_px(charge: float) -> float:
+    return lerp(
+        config.MIN_REACTION_RADIUS_PX,
+        config.MAX_REACTION_RADIUS_PX,
+        charge,
+    )
+
+
+def radial_strength(normalized_radius: float, charge: float) -> float:
+    x = clamp01(normalized_radius)
+    base = config.OUTER_STRENGTH_FLOOR + (
+        1.0 - config.OUTER_STRENGTH_FLOOR
+    ) * ((1.0 - x) ** config.RADIAL_STRENGTH_EXPONENT)
+    focus = 1.0 - 0.18 * clamp01(charge)
+    return clamp01(base * focus)
+
+
+def radial_zone(normalized_radius: float) -> RadialZone:
+    if normalized_radius < 0.25:
+        return RadialZone.CORE
+    if normalized_radius < 0.65:
+        return RadialZone.MIDDLE
+    return RadialZone.OUTER
+
+
+def productive_budget(charge: float) -> int:
+    return min(
+        config.MAX_PRODUCTIVE_ACTIONS,
+        max(2, 2 + round(6.0 * (clamp01(charge) ** 0.85))),
+    )
+
+
+def new_seed_budget(charge: float, local_density: float) -> int:
+    budget = round(productive_budget(charge) * ((1.0 - clamp01(local_density)) ** 1.35))
+    return min(config.MAX_NEW_SEEDS_PER_REACTION, max(0, budget))
+
+
+def wave_arrival_frame(
+    release_frame: int,
+    distance_px: float,
+    reaction_id: int,
+    stable_id: int,
+) -> int:
+    travel = round(distance_px / max(0.1, config.REACTION_WAVE_SPEED_PX_PER_FRAME))
+    jitter = stable_range(
+        0,
+        config.REACTION_WAVE_JITTER_FRAMES,
+        reaction_id,
+        stable_id,
+        int(distance_px * 10.0),
+    )
+    return release_frame + travel + jitter
 
 
 def response_coefficient(

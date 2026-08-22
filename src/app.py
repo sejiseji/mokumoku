@@ -10,7 +10,7 @@ from src.build_info import APP_BUILD_LABEL
 from src.camera.camera import CameraController
 from src.camera.projection import camera_depth
 from src.cloud.incubation import build_adjacency, node_retention_score
-from src.cloud.reaction import ReactionEventKind
+from src.cloud.reaction import ReactionEventKind, charge_level, reaction_radius_px
 from src.cloud.rendering import (
     BridgePayload,
     EdgePayload,
@@ -40,6 +40,17 @@ class ActivePointer:
     dragging: bool = False
     long_press_sent: bool = False
     last_drag_hold_frame: int | None = None
+
+
+@dataclass(frozen=True)
+class CloudReactionWave:
+    reaction_id: int
+    origin_screen_x: float
+    origin_screen_y: float
+    release_frame: int
+    max_radius_px: float
+    charge_level: float
+    local_density: float
 
 
 @dataclass(frozen=True)
@@ -108,6 +119,7 @@ class MokumokuApp:
         self.motion_atlas_build_ms = (time.perf_counter() - atlas_start) * 1000.0
         self.motion_runtime = WeatherMotionRuntime()
         self.pointer: ActivePointer | None = None
+        self.reaction_waves: list[CloudReactionWave] = []
         self.previous_selected_id: int | None = None
         self.debug_enabled = False
         self.assets_loaded = False
@@ -152,6 +164,7 @@ class MokumokuApp:
         if not consumed_pointer:
             self.update_pointer()
         self.cloud.update(1.0 / config.FPS)
+        self.prune_reaction_waves()
         self.state.frame += 1
         if self.smoke_frames is not None and self.state.frame >= self.smoke_frames:
             pyxel.quit()
@@ -210,7 +223,7 @@ class MokumokuApp:
         distance = math.hypot(x - pointer.start_x, y - pointer.start_y)
 
         if pressed and pointer.selected_node_id is not None:
-            if distance >= config.DRAG_START_DISTANCE:
+            if distance >= config.REACTION_DRAG_START_DISTANCE_PX:
                 if not pointer.dragging:
                     self.motion_runtime.trigger_response_wave(
                         self.cloud.state,
@@ -231,14 +244,6 @@ class MokumokuApp:
                     pointer.last_drag_hold_frame = self.state.frame
                 pointer.dragging = True
                 self.cloud.drag_node_to_screen(pointer.selected_node_id, x, y, camera)
-            elif (
-                duration >= config.LONG_PRESS_SECONDS
-                and distance <= config.PRESS_SLOP_PX
-                and not pointer.long_press_sent
-            ):
-                result = self.cloud.long_press_node(pointer.selected_node_id)
-                self.trigger_operation_response(result, TouchResponseKind.LONG_PRESS)
-                pointer.long_press_sent = True
 
         if just_released:
             self.finish_pointer(x, y, duration, distance, camera)
@@ -271,8 +276,20 @@ class MokumokuApp:
                 TouchResponseKind.RELEASE,
             )
         elif not pointer.dragging and not pointer.long_press_sent:
-            result = self.cloud.tap_screen(x, y, camera)
-            self.trigger_operation_response(result, TouchResponseKind.TAP)
+            response_kind = (
+                TouchResponseKind.LONG_PRESS
+                if duration >= config.LONG_PRESS_SECONDS
+                else TouchResponseKind.TAP
+            )
+            result = self.cloud.radial_reaction_screen(
+                pointer.start_x,
+                pointer.start_y,
+                duration,
+                camera,
+                pointer.selected_node_id,
+            )
+            self.trigger_operation_response(result, response_kind)
+            self.add_reaction_wave(result, pointer.start_x, pointer.start_y)
 
         self.pointer = None
 
@@ -295,8 +312,17 @@ class MokumokuApp:
                 )
                 if event.kind is ReactionEventKind.SECONDARY_SPROUT:
                     strength = max(strength, config.CLOUD_TAP_RESPONSE_STRENGTH - 2)
-                elif event.kind is ReactionEventKind.SEED_IGNITION:
+                elif event.kind in (
+                    ReactionEventKind.SEED_IGNITION,
+                    ReactionEventKind.IGNITE_DORMANT,
+                ):
                     strength = max(strength, config.CLOUD_TAP_RESPONSE_STRENGTH - 4)
+                elif event.kind is ReactionEventKind.CREATE_SEED:
+                    strength = max(strength, config.CLOUD_TAP_RESPONSE_STRENGTH - 3)
+                elif event.kind is ReactionEventKind.VISUAL_WAVE_HIT:
+                    strength = min(strength, 5)
+                elif event.kind is ReactionEventKind.GRAPH_NODE_PULSE:
+                    strength = min(strength, config.CLOUD_TAP_RESPONSE_STRENGTH - 5)
                 self.motion_runtime.schedule_response(
                     event.target_node_id,
                     self.state.frame + offset,
@@ -312,6 +338,37 @@ class MokumokuApp:
             self.state.frame,
             response_kind,
         )
+
+    def add_reaction_wave(
+        self,
+        result: CloudOperationResult,
+        screen_x: float,
+        screen_y: float,
+    ) -> None:
+        summary = result.reaction_summary
+        if summary is None or result.reaction_id is None:
+            return
+        self.reaction_waves.append(
+            CloudReactionWave(
+                reaction_id=result.reaction_id,
+                origin_screen_x=screen_x,
+                origin_screen_y=screen_y,
+                release_frame=self.state.frame,
+                max_radius_px=summary.max_radius_px,
+                charge_level=summary.charge_level,
+                local_density=summary.local_density,
+            )
+        )
+        self.reaction_waves = self.reaction_waves[-6:]
+
+    def prune_reaction_waves(self) -> None:
+        active: list[CloudReactionWave] = []
+        for wave in self.reaction_waves:
+            age = self.state.frame - wave.release_frame
+            radius = age * config.REACTION_WAVE_SPEED_PX_PER_FRAME
+            if radius <= wave.max_radius_px + config.REACTION_WAVE_RING_WIDTH_PX:
+                active.append(wave)
+        self.reaction_waves = active
 
     def cancel_pointer(self) -> None:
         self.pointer = None
@@ -335,12 +392,13 @@ class MokumokuApp:
             config.COLOR_UI,
         )
         self.draw_cloud()
+        self.draw_radial_reaction_feedback()
         self.draw_camera_buttons()
-        pyxel.text(8, 8, "MOKUMOKU Prototype A6", config.COLOR_UI)
+        pyxel.text(8, 8, "MOKUMOKU Prototype A7", config.COLOR_UI)
         pyxel.text(
             8,
             18,
-            "Tap cloud/sky, hold, drag, flick.",
+            "Press/release cloud/sky, drag, flick.",
             config.COLOR_UI,
         )
         pyxel.text(8, 28, f"yaw {self.camera.current_yaw:5.1f}", config.COLOR_UI)
@@ -359,6 +417,62 @@ class MokumokuApp:
             APP_BUILD_LABEL,
             config.COLOR_UI,
         )
+
+    def draw_radial_reaction_feedback(self) -> None:
+        for wave in self.reaction_waves:
+            age = self.state.frame - wave.release_frame
+            radius = age * config.REACTION_WAVE_SPEED_PX_PER_FRAME
+            if radius <= 0.0:
+                continue
+            fade = 1.0 - radius / max(1.0, wave.max_radius_px)
+            color = 7 if fade > 0.45 else 6
+            self.draw_dotted_circle(
+                wave.origin_screen_x,
+                wave.origin_screen_y,
+                min(radius, wave.max_radius_px),
+                color,
+                step_degrees=18,
+                dot_radius=1 if wave.charge_level < 0.68 else 2,
+            )
+
+        pointer = self.pointer
+        if pointer is None or pointer.dragging or not self.camera.can_accept_cloud_input():
+            return
+        hold_seconds = (self.state.frame - pointer.press_frame) / config.FPS
+        charge = charge_level(hold_seconds)
+        radius = reaction_radius_px(charge)
+        color = 6 if charge < 0.55 else 7
+        self.draw_dotted_circle(
+            pointer.start_x,
+            pointer.start_y,
+            radius,
+            color,
+            step_degrees=24,
+            dot_radius=1,
+        )
+
+    def draw_dotted_circle(
+        self,
+        center_x: float,
+        center_y: float,
+        radius: float,
+        color: int,
+        step_degrees: int,
+        dot_radius: int,
+    ) -> None:
+        pyxel = self.pyxel
+        if radius < 2.0:
+            return
+        for degrees in range(0, 360, step_degrees):
+            angle = math.radians(degrees)
+            x = int(round(center_x + math.cos(angle) * radius))
+            y = int(round(center_y + math.sin(angle) * radius))
+            if x < 0 or x >= config.SCREEN_WIDTH or y < 0 or y >= config.SCREEN_HEIGHT:
+                continue
+            if dot_radius <= 1:
+                pyxel.pset(x, y, color)
+            else:
+                pyxel.circ(x, y, dot_radius, color)
 
     def draw_cloud(self) -> None:
         camera = self.camera.basis()
