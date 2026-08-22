@@ -377,6 +377,51 @@ class AssetsRenderingWebTests(unittest.TestCase):
         self.assertGreaterEqual(len(shape_levels), 2)
         self.assertTrue(all(0 <= level < config.CLOUD_SHAPE_LEVELS for level in shape_levels))
 
+    def test_active_connected_nodes_use_slow_shared_pose_offset(self) -> None:
+        atlas = WeatherMotionAtlas.build(seed=12345)
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        parent = simulation.state.nodes[result.node_id]
+        projection = project_point(parent.position, camera)
+        child = simulation.tap_screen(projection.screen_x + 30.0, projection.screen_y, camera)
+        self.assertIsNotNone(child.node_id)
+
+        runtime = WeatherMotionRuntime()
+        relative_offsets: set[tuple[float, float]] = set()
+        pose_levels: set[int] = set()
+        for frame in range(
+            0,
+            int(config.CLOUD_SHAPE_PERIOD_SECONDS * config.FPS * 2),
+            config.FPS,
+        ):
+            items = collect_cloud_render_items(
+                simulation.state,
+                camera,
+                frame=frame,
+                motion_atlas=atlas,
+                motion_runtime=runtime,
+            )
+            payloads = {
+                item.payload.node.id: item.payload
+                for item in items
+                if isinstance(item.payload, NodePayload)
+            }
+            parent_payload = payloads[result.node_id]
+            child_payload = payloads[child.node_id]
+            self.assertEqual(parent_payload.pose_level, child_payload.pose_level)
+            pose_levels.add(parent_payload.pose_level)
+            relative_offsets.add(
+                (
+                    child_payload.offset_x - parent_payload.offset_x,
+                    child_payload.offset_y - parent_payload.offset_y,
+                )
+            )
+
+        self.assertGreaterEqual(len(pose_levels), 2)
+        self.assertGreaterEqual(len(relative_offsets), 2)
+
     def test_growth_event_level_is_added_to_node_payload(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=12345)
         simulation = CloudSimulation(RandomSource(12345))

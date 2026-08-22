@@ -164,6 +164,27 @@ class MotionAtlasTests(unittest.TestCase):
             (0, 0),
         )
 
+    def test_pose_runtime_moves_one_level_at_a_time(self) -> None:
+        runtime = WeatherMotionRuntime()
+        interval = config.CLOUD_NODE_POSE_INTERVAL_FRAMES[int(CloudMotionState.ACTIVE)][0]
+
+        self.assertEqual(
+            runtime.pose_level(1, -1, 0, int(CloudMotionState.ACTIVE), "s"),
+            -1,
+        )
+        self.assertEqual(
+            runtime.pose_level(1, 1, interval - 1, int(CloudMotionState.ACTIVE), "s"),
+            -1,
+        )
+        self.assertEqual(
+            runtime.pose_level(1, 1, interval, int(CloudMotionState.ACTIVE), "s"),
+            0,
+        )
+        self.assertEqual(
+            runtime.pose_level(1, 1, interval * 2, int(CloudMotionState.ACTIVE), "s"),
+            1,
+        )
+
     def test_growth_runtime_reports_only_triggered_event_window(self) -> None:
         atlas = WeatherMotionAtlas.build(seed=123)
         runtime = WeatherMotionRuntime()

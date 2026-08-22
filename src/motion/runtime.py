@@ -15,6 +15,8 @@ class WeatherMotionRuntime:
     cluster_y_changed_at: dict[int, int] = field(default_factory=dict)
     local_x_changed_at: dict[int, int] = field(default_factory=dict)
     local_y_changed_at: dict[int, int] = field(default_factory=dict)
+    cluster_pose: dict[int, int] = field(default_factory=dict)
+    cluster_pose_changed_at: dict[int, int] = field(default_factory=dict)
     growth_started_at: dict[int, int] = field(default_factory=dict)
 
     def cluster_offset(
@@ -55,6 +57,23 @@ class WeatherMotionRuntime:
             motion_interval(config.CLOUD_CLUSTER_Y_INTERVAL_FRAMES, motion_state, size_class),
         )
         return dx, dy
+
+    def pose_level(
+        self,
+        cluster_key: int,
+        candidate: int,
+        frame: int,
+        motion_state: int,
+        size_class: str,
+    ) -> int:
+        return gated_level_step(
+            cluster_key,
+            candidate,
+            frame,
+            self.cluster_pose,
+            self.cluster_pose_changed_at,
+            motion_interval(config.CLOUD_NODE_POSE_INTERVAL_FRAMES, motion_state, size_class),
+        )
 
     def local_offset(
         self,
@@ -160,3 +179,33 @@ def motion_size_index(size_class: str) -> int:
         return config.CLOUD_MOTION_SIZE_CLASSES.index(size_class)
     except ValueError:
         return config.CLOUD_MOTION_SIZE_CLASSES.index("m")
+
+
+def gated_level_step(
+    key: int,
+    candidate: int,
+    frame: int,
+    values: dict[int, int],
+    changed_at: dict[int, int],
+    min_interval_frames: int,
+) -> int:
+    candidate = max(-1, min(1, candidate))
+    current = values.get(key)
+    if current is None:
+        values[key] = candidate
+        changed_at[key] = frame
+        return candidate
+    if candidate == current:
+        return current
+
+    last_changed = changed_at.get(key, frame)
+    if frame >= last_changed and frame - last_changed < min_interval_frames:
+        return current
+
+    if candidate > current:
+        current += 1
+    else:
+        current -= 1
+    values[key] = current
+    changed_at[key] = frame
+    return current

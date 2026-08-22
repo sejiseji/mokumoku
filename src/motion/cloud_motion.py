@@ -100,6 +100,23 @@ def cloud_shape_level(node: CloudNode, atlas: WeatherMotionAtlas, frame: int) ->
     return atlas.cloud_shape(group, effective_phase)
 
 
+def cloud_cluster_pose_level(
+    node: CloudNode,
+    atlas: WeatherMotionAtlas,
+    frame: int,
+    runtime: WeatherMotionRuntime | None = None,
+    size_class: str = "m",
+) -> int:
+    motion_state = cloud_motion_state_for_node(node)
+    cluster_key = cluster_seed(node)
+    phase = shape_phase_index(atlas, frame, cluster_key * 5)
+    group = cluster_key % atlas.group_count
+    candidate = atlas.cloud_shape(group, phase) - 1
+    if runtime is None:
+        return candidate
+    return runtime.pose_level(cluster_key, candidate, frame, int(motion_state), size_class)
+
+
 def cloud_bank_offset(
     atlas: WeatherMotionAtlas,
     motion_state: CloudMotionState,
