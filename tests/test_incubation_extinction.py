@@ -5,7 +5,13 @@ import unittest
 from src import config
 from src.camera.camera import build_camera_basis
 from src.cloud.graph import add_edge, create_node, recompute_clusters
-from src.cloud.incubation import build_adjacency, node_retention_score, retained_decay_ratio
+from src.cloud.incubation import (
+    build_adjacency,
+    fragment_decay_multiplier,
+    node_retention_score,
+    node_settlement_score,
+    retained_decay_ratio,
+)
 from src.cloud.simulation import CloudSimulation
 from src.enums import EdgeKind
 from src.math3d import Vec3
@@ -126,6 +132,61 @@ class IncubationExtinctionTests(unittest.TestCase):
             connected.state.nodes[connected_id].mass,
             isolated.state.nodes[isolated_id].mass,
         )
+
+    def test_settled_connected_node_gets_stronger_decay_protection(self) -> None:
+        simulation, _, first_id = self.make_seeded_simulation()
+        second_id = self.add_chain_node(simulation, first_id, 18.0)
+        for node_id in (first_id, second_id):
+            node = simulation.state.nodes[node_id]
+            node.mass = config.SEED_MASS + config.RETENTION_GROWN_MASS
+            node.incubation = 1.0
+            node.noise = 0.0
+        first = simulation.state.nodes[first_id]
+        adjacency = build_adjacency(simulation.state)
+
+        retention = node_retention_score(first, adjacency[first_id], simulation.state)
+        settlement = node_settlement_score(first, adjacency[first_id], simulation.state, retention)
+
+        self.assertGreaterEqual(settlement, config.SETTLED_RETENTION_SCORE)
+        self.assertLess(
+            retained_decay_ratio(retention, settled=True),
+            retained_decay_ratio(retention),
+        )
+
+    def test_settled_connected_node_decays_slower_than_noisy_connected_node(self) -> None:
+        settled, _, settled_id = self.make_seeded_simulation()
+        noisy, _, noisy_id = self.make_seeded_simulation()
+        settled_child_id = self.add_chain_node(settled, settled_id, 18.0)
+        noisy_child_id = self.add_chain_node(noisy, noisy_id, 18.0)
+
+        for simulation, node_ids, mature in (
+            (settled, (settled_id, settled_child_id), True),
+            (noisy, (noisy_id, noisy_child_id), False),
+        ):
+            for node_id in node_ids:
+                node = simulation.state.nodes[node_id]
+                node.mass = config.SEED_MASS + config.RETENTION_GROWN_MASS
+                node.untouched_time = config.NATURAL_MASS_DECAY_START_SECONDS + 1.0
+                node.incubation = 1.0 if mature else 0.0
+                node.noise = 0.0 if mature else 1.0
+
+        settled.update(1.0)
+        noisy.update(1.0)
+
+        self.assertGreater(
+            settled.state.nodes[settled_id].mass,
+            noisy.state.nodes[noisy_id].mass,
+        )
+
+    def test_weak_isolated_fragment_gets_extra_decay_multiplier(self) -> None:
+        simulation, _, node_id = self.make_seeded_simulation()
+        node = simulation.state.nodes[node_id]
+        node.mass = config.WEAK_FRAGMENT_MASS_LIMIT
+        node.untouched_time = config.FRAGMENT_DECAY_START_SECONDS
+
+        multiplier = fragment_decay_multiplier(node, set(), 0.0)
+
+        self.assertEqual(multiplier, config.ISOLATED_FRAGMENT_DECAY_MULTIPLIER)
 
     def test_redundant_mature_nodes_merge_without_losing_structure(self) -> None:
         simulation, _, first_id = self.make_seeded_simulation()

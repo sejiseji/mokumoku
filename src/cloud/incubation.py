@@ -20,6 +20,9 @@ def update_incubation(state: CloudState, dt: float) -> None:
     mature_positions: dict[int, Vec3] = {}
 
     for node in state.nodes.values():
+        neighbor_ids = adjacency.get(node.id, set())
+        retention = node_retention_score(node, neighbor_ids, state)
+        settlement = node_settlement_score(node, neighbor_ids, state, retention)
         if node.is_pruning:
             node.fade = max(0.0, node.fade - dt / config.PRUNE_FADE_SECONDS)
             continue
@@ -28,13 +31,14 @@ def update_incubation(state: CloudState, dt: float) -> None:
             node.incubation += dt * config.INCUBATION_GAIN_RATE
             node.noise = max(0.0, node.noise - dt * config.NOISE_DECAY_RATE)
             if node.untouched_time >= config.NATURAL_MASS_DECAY_START_SECONDS:
-                retention = node_retention_score(node, adjacency.get(node.id, set()), state)
-                decay_ratio = retained_decay_ratio(retention)
+                settled = settlement >= config.SETTLED_RETENTION_SCORE
+                decay_ratio = retained_decay_ratio(retention, settled)
+                decay_ratio *= fragment_decay_multiplier(node, neighbor_ids, retention)
                 decay = config.NATURAL_MASS_DECAY_RATE * decay_ratio
                 node.mass = max(0.0, node.mass - dt * decay)
 
-        if node.incubation > 0.0 and adjacency.get(node.id):
-            mature_positions[node.id] = smoothed_position(node, adjacency[node.id], state, dt)
+        if node.incubation > 0.0 and neighbor_ids:
+            mature_positions[node.id] = smoothed_position(node, neighbor_ids, state, dt, settlement)
 
         if node.mass <= config.PRUNE_MASS_THRESHOLD:
             node.is_pruning = True
@@ -51,10 +55,20 @@ def update_incubation(state: CloudState, dt: float) -> None:
     refresh_all_clusters(state)
 
 
-def retained_decay_ratio(retention: float) -> float:
+def retained_decay_ratio(retention: float, settled: bool = False) -> float:
     retention = max(0.0, min(1.0, retention))
-    ratio = 1.0 - retention * config.RETENTION_DECAY_REDUCTION
-    return max(config.RETAINED_MASS_DECAY_MIN_RATIO, ratio)
+    reduction = (
+        config.SETTLED_RETENTION_DECAY_REDUCTION
+        if settled
+        else config.RETENTION_DECAY_REDUCTION
+    )
+    minimum = (
+        config.SETTLED_RETAINED_MASS_DECAY_MIN_RATIO
+        if settled
+        else config.RETAINED_MASS_DECAY_MIN_RATIO
+    )
+    ratio = 1.0 - retention * reduction
+    return max(minimum, ratio)
 
 
 def node_retention_score(
@@ -77,6 +91,55 @@ def node_retention_score(
         + maturity_score * calm_score * 0.20
         + strain_score * 0.20
     )
+
+
+def node_settlement_score(
+    node: CloudNode,
+    neighbor_ids: set[int],
+    state: CloudState,
+    retention: float | None = None,
+) -> float:
+    if not neighbor_ids:
+        return 0.0
+    if retention is None:
+        retention = node_retention_score(node, neighbor_ids, state)
+    neighbor_maturity = sum(
+        min(1.0, state.nodes[neighbor_id].incubation)
+        for neighbor_id in neighbor_ids
+        if neighbor_id in state.nodes
+    ) / max(1.0, len(neighbor_ids))
+    neighbor_calm = sum(
+        1.0 - max(0.0, min(1.0, state.nodes[neighbor_id].noise))
+        for neighbor_id in neighbor_ids
+        if neighbor_id in state.nodes
+    ) / max(1.0, len(neighbor_ids))
+    own_maturity = min(1.0, node.incubation)
+    return max(
+        0.0,
+        min(
+            1.0,
+            retention * 0.45
+            + own_maturity * 0.20
+            + neighbor_maturity * 0.20
+            + neighbor_calm * 0.15,
+        ),
+    )
+
+
+def fragment_decay_multiplier(
+    node: CloudNode,
+    neighbor_ids: set[int],
+    retention: float,
+) -> float:
+    if node.untouched_time < config.FRAGMENT_DECAY_START_SECONDS:
+        return 1.0
+    if node.mass > config.WEAK_FRAGMENT_MASS_LIMIT:
+        return 1.0
+    if not neighbor_ids:
+        return config.ISOLATED_FRAGMENT_DECAY_MULTIPLIER
+    if len(neighbor_ids) <= 1 and retention < config.WEAK_FRAGMENT_RETENTION_THRESHOLD:
+        return config.WEAK_LEAF_DECAY_MULTIPLIER
+    return 1.0
 
 
 def connected_strain_score(
@@ -110,6 +173,7 @@ def smoothed_position(
     neighbor_ids: set[int],
     state: CloudState,
     dt: float,
+    settlement: float = 0.0,
 ) -> Vec3:
     total = Vec3(0.0, 0.0, 0.0)
     count = 0
@@ -121,7 +185,8 @@ def smoothed_position(
     if count == 0:
         return node.position
     average = total / count
-    smoothing = min(1.0, config.SMOOTHING_RATE * dt * max(1.0, node.incubation))
+    smoothing_bonus = 1.0 + max(0.0, min(1.0, settlement)) * config.SETTLED_SMOOTHING_BONUS
+    smoothing = min(1.0, config.SMOOTHING_RATE * dt * max(1.0, node.incubation) * smoothing_bonus)
     return node.position.lerp(average, smoothing)
 
 
