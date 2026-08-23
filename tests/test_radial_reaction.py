@@ -42,7 +42,7 @@ class RadialReactionTests(unittest.TestCase):
         self.assertGreater(middle, outer)
         self.assertGreaterEqual(outer, config.OUTER_STRENGTH_FLOOR)
 
-    def test_empty_short_reaction_creates_center_seed(self) -> None:
+    def test_empty_short_reaction_creates_five_radial_seeds(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
         camera = build_camera_basis(0.0)
 
@@ -50,9 +50,12 @@ class RadialReactionTests(unittest.TestCase):
 
         self.assertEqual(result.kind, "radial")
         self.assertIsNotNone(result.reaction_summary)
-        self.assertEqual(result.reaction_summary.created_seeds, 1)
+        self.assertEqual(
+            result.reaction_summary.created_seeds,
+            config.BASE_NEW_SEEDS_PER_REACTION,
+        )
         self.assertLess(result.reaction_summary.local_density, 0.25)
-        self.assertEqual(len(simulation.state.nodes), 1)
+        self.assertEqual(len(simulation.state.nodes), config.BASE_NEW_SEEDS_PER_REACTION)
         created = simulation.state.nodes[result.spawned_node_ids[0]]
         projection = project_point(created.position, camera)
         self.assertAlmostEqual(projection.screen_x, 160.0, delta=1.0)

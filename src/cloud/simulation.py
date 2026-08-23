@@ -458,9 +458,7 @@ class CloudSimulation:
                 )
             )
 
-        create_budget = max(1, new_seed_budget(charge, local_density))
-        if charge < 0.18 and local_density < 0.35:
-            create_budget = min(create_budget, 1)
+        create_budget = new_seed_budget(charge, local_density)
         center_has_existing = any(
             math.hypot(
                 project_point(node.position, camera).screen_x - screen_x,
@@ -472,7 +470,7 @@ class CloudSimulation:
             <= config.REACTION_DEPTH_TOLERANCE
         )
         if not center_has_existing and local_density < 0.25:
-            create_budget = max(1, create_budget)
+            create_budget = max(config.BASE_NEW_SEEDS_PER_REACTION, create_budget)
         create_candidates = self.radial_create_candidates(
             reaction_id,
             screen_x,

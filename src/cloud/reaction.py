@@ -189,7 +189,10 @@ def productive_budget(charge: float) -> int:
 
 def new_seed_budget(charge: float, local_density: float) -> int:
     budget = round(productive_budget(charge) * ((1.0 - clamp01(local_density)) ** 1.35))
-    return min(config.MAX_NEW_SEEDS_PER_REACTION, max(0, budget))
+    return min(
+        config.MAX_NEW_SEEDS_PER_REACTION,
+        max(config.BASE_NEW_SEEDS_PER_REACTION, budget),
+    )
 
 
 def wave_arrival_frame(
