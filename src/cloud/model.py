@@ -43,6 +43,10 @@ class CloudNode:
     sprite_seed: int
     sprite_family: str
     size_class: str
+    excitation: float = 0.0
+    refractory_until_frame: int = 0
+    polarity: Vec3 = field(default_factory=lambda: Vec3(0.0, 1.0, 0.0))
+    trait_seed: int = 0
 
     @property
     def radius(self) -> float:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import deque
 
 from src import config
@@ -79,6 +80,16 @@ def create_node(
     if not state.can_add_node():
         raise RuntimeError("node limit reached")
 
+    sprite_seed = rng.randint(0, 2**31 - 1)
+    trait_seed = stable_node_hash(
+        sprite_seed,
+        state.next_node_id,
+        lineage_id,
+        cluster_id,
+        parent_node_id or 0,
+        generation,
+    )
+    polarity = initial_polarity(state, parent_node_id, trait_seed)
     node = CloudNode(
         id=state.next_node_id,
         lineage_id=lineage_id,
@@ -102,13 +113,50 @@ def create_node(
         parent_node_id=parent_node_id,
         generation=generation,
         origin_evidence=state.lineages[lineage_id].total_origin_evidence,
-        sprite_seed=rng.randint(0, 2**31 - 1),
+        sprite_seed=sprite_seed,
         sprite_family="placeholder",
         size_class="m",
+        polarity=polarity,
+        trait_seed=trait_seed,
     )
     state.nodes[node.id] = node
     state.next_node_id += 1
     return node
+
+
+def stable_node_hash(*parts: int) -> int:
+    value = 0x4C17A11D
+    for index, part in enumerate(parts):
+        value ^= (part + index * 0x9E3779B9) & 0xFFFFFFFF
+        value = (value * 0x85EBCA6B) & 0xFFFFFFFF
+        value ^= value >> 13
+        value = (value * 0xC2B2AE35) & 0xFFFFFFFF
+        value ^= value >> 16
+    return value & 0xFFFFFFFF
+
+
+def stable_node_hash01(*parts: int) -> float:
+    return stable_node_hash(*parts) / 0xFFFFFFFF
+
+
+def initial_polarity(
+    state: CloudState,
+    parent_node_id: int | None,
+    trait_seed: int,
+) -> Vec3:
+    angle = stable_node_hash01(trait_seed, 0x901A) * math.tau
+    random_direction = Vec3(
+        math.cos(angle),
+        0.38 + stable_node_hash01(trait_seed, 0x901B) * 0.46,
+        math.sin(angle) * 0.22,
+    )
+    if parent_node_id is not None and parent_node_id in state.nodes:
+        parent = state.nodes[parent_node_id]
+        random_direction = parent.polarity * 0.76 + random_direction * 0.24
+    try:
+        return random_direction.normalized()
+    except ValueError:
+        return Vec3(0.0, 1.0, 0.0)
 
 
 def recompute_clusters(state: CloudState, lineage_id: int) -> None:

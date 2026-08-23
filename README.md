@@ -2,7 +2,7 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A7 Density-Adaptive Radial Reaction です。A0〜A6 基盤に加えて、静止した押下/リリースを一点追加ではなく反応波として処理し、押下時間と周辺密度に応じて既存雲の反応、Dormant Seed共鳴、副次発芽、放射状の新規Seed生成を選び分けます。
+現在の実装範囲は Prototype A8 Cloud Seed Ecology です。A0〜A7 基盤に加えて、雲ノードへ刺激蓄積、不応期、trait由来の反応差、近距離活性と中距離抑制を入れ、Waveが届いた瞬間に全員が発芽するのではなく、Seedが刺激を覚えて条件が揃った時だけ反応するようにしています。
 
 Quiet Motion Pass では、Ambient時のノード中心移動とサイズpulseを止め、外縁ノードだけを疎にsprite variant morphさせます。タップ、長押し、ドラッグ開始、フリックの反応は一回性のGrowthPulseとして扱い、グラフ距離2まで遅延伝播します。
 
@@ -15,6 +15,8 @@ Maturation / Settlement では、成熟してまとまった接続ノードの�
 Prototype A5 Acceptance では、5〜8ノードの接続雲、全カメラでのタップ位置整合、30秒放置時のAmbient中心静止、通常表示のエッジ非表示を自動検査する受け入れシナリオを追加しています。
 
 Cloud Reaction System では、短い押下は小さく集中した反応、長い押下は広く弱い放射反応として扱います。新規Seed生成は常に行い、疎な空では反応円内へSeedを複数配置し、混在領域や密な雲ではSeed生成に加えて共鳴、既存雲の成長、グラフ伝播を重ねます。放射状に作られるSeedは中心に近いほどやや大きく、外側ほど軽く小さく生成されます。反応には生成数、反応ノード数、発芽数、共鳴数、イベント数、継続時間の予算を持たせ、終了後はQuiet Motionへ戻ります。
+
+Cloud Seed Ecology では、弱いWaveを受けたDormant Seedはすぐ発芽せず `excitation` を蓄積します。2回目以降のWave、近くの発芽、周辺の空き具合によって閾値を超えた場合だけBloomし、Bloom後は短い不応期へ入ります。不応期中も薄いPulseは返しますが、同じSeedが連打で即座に増殖し続けることはありません。
 
 ## Requirements
 

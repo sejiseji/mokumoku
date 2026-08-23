@@ -68,7 +68,12 @@ def build_connected_cloud(seed: int = 12345) -> CloudSimulation:
         raise RuntimeError("failed to create acceptance root cloud node")
 
     node_id = root_result.node_id
-    for offset_x, offset_y in ((26.0, 0.0), (-24.0, 4.0), (8.0, -22.0)):
+    for offset_x, offset_y in (
+        (26.0, 0.0),
+        (-24.0, 4.0),
+        (8.0, -16.0),
+        (-10.0, 22.0),
+    ):
         node = simulation.state.nodes[node_id]
         projection = project_point(node.position, camera)
         result = simulation.tap_screen(

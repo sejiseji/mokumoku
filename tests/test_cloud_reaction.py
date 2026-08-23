@@ -82,7 +82,8 @@ class CloudReactionTests(unittest.TestCase):
         pulse_events = [
             event
             for event in result.reaction_events
-            if event.kind is ReactionEventKind.NODE_PULSE
+            if event.kind
+            in (ReactionEventKind.NODE_PULSE, ReactionEventKind.VISUAL_WAVE_HIT)
         ]
         frame_by_node = {
             event.target_node_id: event.execute_frame for event in pulse_events
@@ -97,7 +98,7 @@ class CloudReactionTests(unittest.TestCase):
             config.MAX_CHAIN_GENERATION,
         )
 
-    def test_seed_resonance_ignites_nearby_dormant_seed_with_delay(self) -> None:
+    def test_seed_resonance_primes_then_ignites_nearby_dormant_seed(self) -> None:
         simulation, camera, root_id = self.make_seed()
         root = simulation.state.nodes[root_id]
         root_projection = project_point(root.position, camera)
@@ -105,12 +106,27 @@ class CloudReactionTests(unittest.TestCase):
         first = simulation.tap_screen(root_projection.screen_x, root_projection.screen_y, camera)
         self.assertGreaterEqual(len(first.spawned_node_ids), 1)
         seed = simulation.tap_screen(
-            root_projection.screen_x + 68.0,
+            root_projection.screen_x + config.DORMANT_SEED_TAP_RADIUS_PX + 14.0,
             root_projection.screen_y,
             camera,
         )
         self.assertEqual(seed.kind, "seed")
         self.assertIsNotNone(seed.node_id)
+        seed_node = simulation.state.nodes[seed.node_id]
+        old_mass = seed_node.mass
+
+        primed = simulation.tap_screen(root_projection.screen_x, root_projection.screen_y, camera)
+        primed_events = [
+            event
+            for event in primed.reaction_events
+            if event.target_node_id == seed.node_id
+        ]
+        self.assertNotIn(seed.node_id, primed.resonant_node_ids)
+        self.assertTrue(
+            any(event.kind is ReactionEventKind.VISUAL_WAVE_HIT for event in primed_events)
+        )
+        self.assertGreater(seed_node.excitation, 0.0)
+        self.assertAlmostEqual(seed_node.mass, old_mass)
 
         result = simulation.tap_screen(root_projection.screen_x, root_projection.screen_y, camera)
         resonance_events = [
@@ -123,6 +139,49 @@ class CloudReactionTests(unittest.TestCase):
         self.assertEqual(resonance_events[0].target_node_id, seed.node_id)
         self.assertGreater(resonance_events[0].execute_frame, result.created_frame)
         self.assertGreaterEqual(result.reaction_summary.ignited_seeds, 1)
+
+    def test_refractory_blocks_immediate_rebloom(self) -> None:
+        simulation, camera, node_id = self.make_seed()
+        node = simulation.state.nodes[node_id]
+        projection = project_point(node.position, camera)
+
+        first = simulation.tap_screen(projection.screen_x, projection.screen_y, camera)
+        self.assertGreaterEqual(first.reaction_summary.reacted_nodes, 1)
+        mass_after_first = node.mass
+        refractory_until = node.refractory_until_frame
+
+        second = simulation.tap_screen(projection.screen_x, projection.screen_y, camera)
+
+        self.assertGreater(refractory_until, second.created_frame)
+        self.assertNotIn(node_id, second.reacted_node_ids)
+        self.assertAlmostEqual(node.mass, mass_after_first)
+        self.assertTrue(
+            any(
+                event.kind is ReactionEventKind.VISUAL_WAVE_HIT
+                and event.target_node_id == node_id
+                for event in second.reaction_events
+            )
+        )
+
+    def test_seed_excitation_decays_over_time(self) -> None:
+        simulation, camera, root_id = self.make_seed()
+        root = simulation.state.nodes[root_id]
+        root_projection = project_point(root.position, camera)
+
+        seed = simulation.tap_screen(
+            root_projection.screen_x + config.DORMANT_SEED_TAP_RADIUS_PX + 14.0,
+            root_projection.screen_y,
+            camera,
+        )
+        self.assertIsNotNone(seed.node_id)
+        seed_node = simulation.state.nodes[seed.node_id]
+
+        simulation.tap_screen(root_projection.screen_x, root_projection.screen_y, camera)
+        primed_excitation = seed_node.excitation
+
+        simulation.advance_time(1.0)
+
+        self.assertGreater(primed_excitation, seed_node.excitation)
 
     def test_reaction_budgets_cap_chain_size(self) -> None:
         simulation, camera, root_id = self.make_seed()

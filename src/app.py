@@ -394,7 +394,7 @@ class MokumokuApp:
         self.draw_cloud()
         self.draw_radial_reaction_feedback()
         self.draw_camera_buttons()
-        pyxel.text(8, 8, "MOKUMOKU Prototype A7", config.COLOR_UI)
+        pyxel.text(8, 8, "MOKUMOKU Prototype A8", config.COLOR_UI)
         pyxel.text(
             8,
             18,

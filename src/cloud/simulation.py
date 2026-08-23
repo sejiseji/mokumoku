@@ -70,6 +70,13 @@ class CloudOperationResult:
     resonant_node_ids: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class SeedEcologyResult:
+    bloomed: bool
+    visual_energy: float
+    threshold: float
+
+
 class CloudSimulation:
     def __init__(self, rng: RandomSource) -> None:
         self.rng = rng
@@ -755,15 +762,62 @@ class CloudSimulation:
             if plan.target_node_id is None or plan.target_node_id not in self.state.nodes:
                 continue
             if plan.action_kind is RadialActionKind.PULSE_EXISTING:
+                self.accumulate_visual_excitation(
+                    plan.target_node_id,
+                    plan.effective_strength * 0.45,
+                )
+                self.apply_seed_visual_stimulus(
+                    plan.target_node_id,
+                    plan.effective_strength,
+                    release_frame,
+                )
                 visual_hits += 1
                 events.append(self.event_from_plan(plan, reaction_id, plan.target_node_id))
                 continue
             if plan.action_kind is RadialActionKind.IGNITE_DORMANT:
-                self.apply_seed_ignition(plan.target_node_id, plan.effective_strength)
-                resonant_ids.append(plan.target_node_id)
-                events.append(self.event_from_plan(plan, reaction_id, plan.target_node_id))
+                ecology = self.apply_seed_ecology_energy(
+                    plan.target_node_id,
+                    plan.effective_strength,
+                    plan.execute_frame,
+                    0,
+                    is_seed=True,
+                )
+                if ecology.bloomed:
+                    self.apply_seed_ignition(plan.target_node_id, plan.effective_strength)
+                    resonant_ids.append(plan.target_node_id)
+                    events.append(self.event_from_plan(plan, reaction_id, plan.target_node_id))
+                else:
+                    visual_hits += 1
+                    events.append(
+                        self.event_from_plan(
+                            plan,
+                            reaction_id,
+                            plan.target_node_id,
+                            kind_override=ReactionEventKind.VISUAL_WAVE_HIT,
+                            energy_override=ecology.visual_energy,
+                        )
+                    )
                 continue
             if plan.action_kind is RadialActionKind.GROW_EXISTING:
+                ecology = self.apply_seed_ecology_energy(
+                    plan.target_node_id,
+                    plan.effective_strength,
+                    plan.execute_frame,
+                    0,
+                    is_seed=False,
+                )
+                if not ecology.bloomed:
+                    visual_hits += 1
+                    events.append(
+                        self.event_from_plan(
+                            plan,
+                            reaction_id,
+                            plan.target_node_id,
+                            kind_override=ReactionEventKind.VISUAL_WAVE_HIT,
+                            energy_override=ecology.visual_energy,
+                        )
+                    )
+                    continue
                 self.apply_node_reaction(plan.target_node_id, plan.effective_strength, 0)
                 reacted_ids.append(plan.target_node_id)
                 productive_hits += 1
@@ -779,7 +833,10 @@ class CloudSimulation:
                         break
                     highest_generation = max(highest_generation, graph_event.generation)
                     if graph_event.target_node_id is not None:
-                        reacted_ids.append(graph_event.target_node_id)
+                        if graph_event.kind is ReactionEventKind.GRAPH_NODE_PULSE:
+                            reacted_ids.append(graph_event.target_node_id)
+                        elif graph_event.kind is ReactionEventKind.VISUAL_WAVE_HIT:
+                            visual_hits += 1
                     events.append(graph_event)
                 sprout = self.create_radial_secondary_sprout(
                     reaction_id,
@@ -852,8 +909,12 @@ class CloudSimulation:
         plan: RadialActionPlan,
         reaction_id: int,
         target_node_id: int | None,
+        kind_override: ReactionEventKind | None = None,
+        energy_override: float | None = None,
     ) -> ReactionEvent:
-        if plan.action_kind is RadialActionKind.PULSE_EXISTING:
+        if kind_override is not None:
+            kind = kind_override
+        elif plan.action_kind is RadialActionKind.PULSE_EXISTING:
             kind = ReactionEventKind.VISUAL_WAVE_HIT
         elif plan.action_kind is RadialActionKind.GROW_EXISTING:
             kind = ReactionEventKind.GROW_EXISTING
@@ -869,7 +930,7 @@ class CloudSimulation:
             target_node_id=target_node_id,
             source_node_id=plan.source_node_id,
             generation=plan.generation,
-            energy=plan.effective_strength,
+            energy=plan.effective_strength if energy_override is None else energy_override,
         )
 
     def create_radial_seed(
@@ -945,17 +1006,30 @@ class CloudSimulation:
                 next_frame = execute_frame + delay
                 if next_frame - source_frame > config.MAX_REACTION_DURATION_FRAMES:
                     continue
-                self.apply_node_reaction(next_id, next_energy, generation + 1)
+                target = self.state.nodes[next_id]
+                ecology = self.apply_seed_ecology_energy(
+                    next_id,
+                    next_energy,
+                    next_frame,
+                    generation + 1,
+                    is_seed=self.is_dormant_seed(target),
+                )
+                kind = ReactionEventKind.VISUAL_WAVE_HIT
+                event_energy = ecology.visual_energy
+                if ecology.bloomed:
+                    self.apply_node_reaction(next_id, next_energy, generation + 1)
+                    kind = ReactionEventKind.GRAPH_NODE_PULSE
+                    event_energy = next_energy
                 events.append(
                     ReactionEvent(
                         execute_frame=next_frame,
                         stable_order=len(events),
                         reaction_id=reaction_id,
-                        kind=ReactionEventKind.GRAPH_NODE_PULSE,
+                        kind=kind,
                         target_node_id=next_id,
                         source_node_id=node_id,
                         generation=generation + 1,
-                        energy=next_energy,
+                        energy=event_energy,
                     )
                 )
                 frontier.append((next_id, generation + 1, next_energy, next_frame))
@@ -1137,23 +1211,44 @@ class CloudSimulation:
             if node.fade <= 0.0 or node.is_pruning:
                 continue
             visited.add(node_id)
-            reacted_ids.append(node_id)
             energies[node_id] = energy
             generations[node_id] = generation
-            highest_generation = max(highest_generation, generation)
-            self.apply_node_reaction(node_id, energy, generation)
-            events.append(
-                ReactionEvent(
-                    execute_frame=execute_frame,
-                    stable_order=len(events),
-                    reaction_id=stimulus.reaction_id,
-                    kind=ReactionEventKind.NODE_PULSE,
-                    target_node_id=node_id,
-                    source_node_id=source_id,
-                    generation=generation,
-                    energy=energy,
-                )
+            ecology = self.apply_seed_ecology_energy(
+                node_id,
+                energy,
+                execute_frame,
+                generation,
+                is_seed=self.is_dormant_seed(node),
             )
+            if ecology.bloomed:
+                reacted_ids.append(node_id)
+                highest_generation = max(highest_generation, generation)
+                self.apply_node_reaction(node_id, energy, generation)
+                events.append(
+                    ReactionEvent(
+                        execute_frame=execute_frame,
+                        stable_order=len(events),
+                        reaction_id=stimulus.reaction_id,
+                        kind=ReactionEventKind.NODE_PULSE,
+                        target_node_id=node_id,
+                        source_node_id=source_id,
+                        generation=generation,
+                        energy=energy,
+                    )
+                )
+            else:
+                events.append(
+                    ReactionEvent(
+                        execute_frame=execute_frame,
+                        stable_order=len(events),
+                        reaction_id=stimulus.reaction_id,
+                        kind=ReactionEventKind.VISUAL_WAVE_HIT,
+                        target_node_id=node_id,
+                        source_node_id=source_id,
+                        generation=generation,
+                        energy=ecology.visual_energy,
+                    )
+                )
             if len(events) >= config.MAX_PENDING_REACTION_EVENTS:
                 break
             if generation >= config.MAX_CHAIN_GENERATION:
@@ -1191,10 +1286,33 @@ class CloudSimulation:
             execute_frame = stimulus.created_frame + delay
             if execute_frame - stimulus.created_frame > config.MAX_REACTION_DURATION_FRAMES:
                 continue
-            self.apply_seed_ignition(seed_id, seed_energy)
-            resonant_ids.append(seed_id)
             energies[seed_id] = seed_energy
             generations[seed_id] = 1
+            ecology = self.apply_seed_ecology_energy(
+                seed_id,
+                seed_energy,
+                execute_frame,
+                1,
+                is_seed=True,
+            )
+            if not ecology.bloomed:
+                events.append(
+                    ReactionEvent(
+                        execute_frame=execute_frame,
+                        stable_order=len(events),
+                        reaction_id=stimulus.reaction_id,
+                        kind=ReactionEventKind.VISUAL_WAVE_HIT,
+                        target_node_id=seed_id,
+                        source_node_id=stimulus.primary_node_id,
+                        generation=1,
+                        energy=ecology.visual_energy,
+                    )
+                )
+                if len(events) >= config.MAX_PENDING_REACTION_EVENTS:
+                    break
+                continue
+            self.apply_seed_ignition(seed_id, seed_energy)
+            resonant_ids.append(seed_id)
             events.append(
                 ReactionEvent(
                     execute_frame=execute_frame,
@@ -1302,6 +1420,123 @@ class CloudSimulation:
         node.moisture = min(1.0, node.moisture + 0.05 * energy)
         node.noise = min(1.0, node.noise + 0.05 * energy)
         self.touch_neighborhood(node_id, graph_distance=0)
+
+    def apply_seed_ecology_energy(
+        self,
+        node_id: int,
+        energy: float,
+        execute_frame: int,
+        generation: int,
+        is_seed: bool,
+    ) -> SeedEcologyResult:
+        if node_id not in self.state.nodes:
+            return SeedEcologyResult(False, 0.0, config.SEED_BLOOM_BASE_THRESHOLD)
+        node = self.state.nodes[node_id]
+        if node.fade <= 0.0 or node.is_pruning:
+            return SeedEcologyResult(False, 0.0, config.SEED_BLOOM_BASE_THRESHOLD)
+
+        if execute_frame < node.refractory_until_frame:
+            retained = energy * config.SEED_REFRACTORY_EXCITATION_RATIO
+            node.excitation = min(config.SEED_EXCITATION_MAX, node.excitation + retained)
+            self.apply_seed_visual_stimulus(node_id, retained, execute_frame)
+            return SeedEcologyResult(
+                False,
+                min(config.SEED_REFRACTORY_VISUAL_ENERGY, max(0.08, retained)),
+                self.seed_bloom_threshold(node, 0.0, 0.0),
+            )
+
+        activation_signal, inhibition_signal = self.local_seed_ecology_signals(
+            node_id,
+            execute_frame,
+        )
+        resonance = seed_resonance_sensitivity(node.trait_seed)
+        incoming = energy * resonance + activation_signal
+        if is_seed:
+            incoming *= 0.92
+        node.excitation = min(config.SEED_EXCITATION_MAX, node.excitation + incoming)
+        threshold = self.seed_bloom_threshold(node, activation_signal, inhibition_signal)
+        force_bloom = energy >= config.SEED_BLOOM_FORCE_ENERGY and generation == 0
+        if not force_bloom and node.excitation < threshold:
+            self.apply_seed_visual_stimulus(node_id, incoming, execute_frame)
+            return SeedEcologyResult(
+                False,
+                max(0.08, min(0.44, node.excitation / max(0.01, threshold))),
+                threshold,
+            )
+
+        node.excitation *= config.SEED_POST_BLOOM_EXCITATION_RATIO
+        node.refractory_until_frame = execute_frame + config.SEED_BLOOM_REFRACTORY_FRAMES
+        return SeedEcologyResult(True, min(1.0, energy), threshold)
+
+    def apply_seed_visual_stimulus(
+        self,
+        node_id: int | None,
+        energy: float,
+        execute_frame: int,
+    ) -> None:
+        del execute_frame
+        if node_id is None or node_id not in self.state.nodes:
+            return
+        node = self.state.nodes[node_id]
+        if node.fade <= 0.0 or node.is_pruning:
+            return
+        amount = clamp01(energy)
+        node.activation = min(1.0, node.activation + 0.035 * amount)
+        primed_bonus = 0.03 if node.excitation >= config.SEED_PRIMED_THRESHOLD else 0.0
+        node.charge = min(1.0, node.charge + 0.08 * amount + primed_bonus)
+        node.untouched_time = 0.0
+
+    def accumulate_visual_excitation(self, node_id: int, energy: float) -> None:
+        if node_id not in self.state.nodes:
+            return
+        node = self.state.nodes[node_id]
+        if node.fade <= 0.0 or node.is_pruning:
+            return
+        retained = energy * seed_resonance_sensitivity(node.trait_seed)
+        node.excitation = min(config.SEED_EXCITATION_MAX, node.excitation + retained)
+
+    def seed_bloom_threshold(
+        self,
+        node: CloudNode,
+        activation_signal: float,
+        inhibition_signal: float,
+    ) -> float:
+        crowding = self.local_density_factor(node.position, node.id)
+        threshold = (
+            config.SEED_BLOOM_BASE_THRESHOLD
+            + 0.16 * crowding
+            + 0.18 * inhibition_signal
+            + 0.08 * node.incubation
+            - 0.18 * node.moisture
+            - 0.10 * node.activation
+            - 0.10 * activation_signal
+        )
+        return max(0.34, min(1.08, threshold))
+
+    def local_seed_ecology_signals(
+        self,
+        node_id: int,
+        frame: int,
+    ) -> tuple[float, float]:
+        node = self.state.nodes[node_id]
+        activation = 0.0
+        inhibition = 0.0
+        for other in self.state.live_nodes():
+            if other.id == node_id or other.is_pruning:
+                continue
+            distance = node.position.distance_to(other.position)
+            if distance <= config.SEED_NEAR_ACTIVATION_RADIUS:
+                recent_bloom = 1.0 if other.refractory_until_frame > frame else 0.0
+                activity = max(other.excitation, recent_bloom, other.activation * 0.35)
+                activation += config.SEED_NEAR_ACTIVATION_GAIN * activity
+            elif (
+                config.SEED_MID_INHIBITION_INNER_RADIUS
+                < distance
+                <= config.SEED_MID_INHIBITION_OUTER_RADIUS
+            ):
+                density = min(1.0, other.mass / max(1.0, config.RETENTION_GROWN_MASS))
+                inhibition += config.SEED_MID_INHIBITION_GAIN * (0.50 + density * 0.50)
+        return clamp01(activation), clamp01(inhibition)
 
     def propagation_targets(
         self,
@@ -1794,6 +2029,11 @@ class CloudSimulation:
             node.age += dt
             node.untouched_time += dt
             node.activation = max(0.0, node.activation - dt * 0.12)
+            node.excitation = max(
+                0.0,
+                node.excitation - dt * config.SEED_EXCITATION_DECAY_RATE,
+            )
+            node.charge = max(0.0, node.charge - dt * 0.18)
         for edge in self.state.edges.values():
             edge.age += dt
         self.relax_connected_edges(dt)
@@ -1887,3 +2127,7 @@ def upward_bias(direction_index: int) -> float:
         return 0.0
     angle = math.tau * direction_index / config.SPROUT_DIRECTION_COUNT
     return max(0.0, math.sin(angle))
+
+
+def seed_resonance_sensitivity(trait_seed: int) -> float:
+    return 0.88 + stable_hash01(trait_seed, 0xEC01) * 0.24
