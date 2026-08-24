@@ -8,6 +8,7 @@ from src.camera.projection import project_point
 from src.cloud.reaction import (
     ReactionEventKind,
     charge_level,
+    new_seed_budget,
     radial_strength,
     reaction_radius_px,
 )
@@ -41,6 +42,18 @@ class RadialReactionTests(unittest.TestCase):
         self.assertGreater(center, middle)
         self.assertGreater(middle, outer)
         self.assertGreaterEqual(outer, config.OUTER_STRENGTH_FLOOR)
+
+    def test_seed_budget_scales_with_charge_to_nine(self) -> None:
+        cold = new_seed_budget(0.0, 0.0)
+        middle = new_seed_budget(0.5, 0.0)
+        full = new_seed_budget(1.0, 0.0)
+        dense_full = new_seed_budget(1.0, 1.0)
+
+        self.assertEqual(cold, config.BASE_NEW_SEEDS_PER_REACTION)
+        self.assertGreater(middle, cold)
+        self.assertEqual(full, config.MAX_NEW_SEEDS_PER_REACTION)
+        self.assertGreaterEqual(dense_full, config.BASE_NEW_SEEDS_PER_REACTION)
+        self.assertLess(dense_full, full)
 
     def test_empty_short_reaction_creates_five_radial_seeds(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
@@ -89,6 +102,10 @@ class RadialReactionTests(unittest.TestCase):
         self.assertGreater(
             long.reaction_summary.created_seeds,
             short.reaction_summary.created_seeds,
+        )
+        self.assertEqual(
+            long.reaction_summary.created_seeds,
+            config.MAX_NEW_SEEDS_PER_REACTION,
         )
         self.assertLessEqual(
             long.reaction_summary.created_seeds,

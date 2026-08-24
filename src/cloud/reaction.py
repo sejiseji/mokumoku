@@ -188,10 +188,12 @@ def productive_budget(charge: float) -> int:
 
 
 def new_seed_budget(charge: float, local_density: float) -> int:
-    budget = round(productive_budget(charge) * ((1.0 - clamp01(local_density)) ** 1.35))
+    span = max(0, config.MAX_NEW_SEEDS_PER_REACTION - config.BASE_NEW_SEEDS_PER_REACTION)
+    density_factor = 0.55 + 0.45 * ((1.0 - clamp01(local_density)) ** 1.35)
+    bonus = round(span * (clamp01(charge) ** 0.85) * density_factor)
     return min(
         config.MAX_NEW_SEEDS_PER_REACTION,
-        max(config.BASE_NEW_SEEDS_PER_REACTION, budget),
+        config.BASE_NEW_SEEDS_PER_REACTION + bonus,
     )
 
 
