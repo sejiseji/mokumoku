@@ -484,6 +484,12 @@ class CloudSimulation:
             primary_node_id,
         )
         selected_positions: list[tuple[float, float]] = []
+        stack_source_id = (
+            primary_node_id
+            if self.radial_stack_factor(primary_node_id, camera) > 0.0
+            else None
+        )
+        stack_attached_seeds = 0
         for screen_cx, screen_cy, position, norm, score in create_candidates:
             if len(selected_positions) >= create_budget:
                 break
@@ -496,13 +502,21 @@ class CloudSimulation:
             seed_order = len(selected_positions)
             strength = radial_strength(norm, charge) * (0.55 + 0.45 * score)
             selected_positions.append((screen_cx, screen_cy))
+            source_node_id = None
+            if (
+                stack_source_id is not None
+                and norm <= config.RADIAL_STACK_ATTACH_MAX_NORMALIZED_RADIUS
+                and stack_attached_seeds < config.RADIAL_STACK_ATTACH_MAX_SEEDS
+            ):
+                source_node_id = stack_source_id
+                stack_attached_seeds += 1
             plans.append(
                 self.make_radial_plan(
                     RadialActionKind.CREATE_SEED,
                     reaction_id,
                     release_frame,
                     None,
-                    None,
+                    source_node_id,
                     screen_cx,
                     screen_cy,
                     position,
@@ -1048,8 +1062,21 @@ class CloudSimulation:
     ) -> CloudNode | None:
         if not self.state.can_add_node():
             return None
-        cluster_id = self.state.next_cluster_id
-        self.state.next_cluster_id += 1
+        source = (
+            self.state.nodes.get(plan.source_node_id)
+            if plan.source_node_id is not None
+            else None
+        )
+        if source is None:
+            cluster_id = self.state.next_cluster_id
+            self.state.next_cluster_id += 1
+            parent_node_id = None
+            generation = 0
+        else:
+            lineage_id = source.lineage_id
+            cluster_id = source.cluster_id
+            parent_node_id = source.id
+            generation = source.generation + 1
         local_rng = RandomSource(
             stable_hash(
                 self.rng.seed,
@@ -1058,7 +1085,15 @@ class CloudSimulation:
                 int(plan.screen_y * 10.0),
             )
         )
-        node = create_node(self.state, lineage_id, cluster_id, plan.world_position, local_rng)
+        node = create_node(
+            self.state,
+            lineage_id,
+            cluster_id,
+            plan.world_position,
+            local_rng,
+            parent_node_id=parent_node_id,
+            generation=generation,
+        )
         strength = clamp01(plan.effective_strength)
         radial_t = clamp01(plan.normalized_radius)
         size_jitter = (stable_hash01(reaction_id, node.id, 0x512E) - 0.5) * 0.10
@@ -1080,6 +1115,17 @@ class CloudSimulation:
             node.density = 1.12
         node.noise = clamp01(0.18 + 0.22 * strength)
         node.untouched_time = 0.0
+        if source is not None:
+            node.updraft = clamp01(source.updraft + 0.07 * (1.0 - radial_t))
+            node.moisture = clamp01((node.moisture + source.moisture * 0.55) / 1.55)
+            add_edge(
+                self.state,
+                lineage_id,
+                cluster_id,
+                source.id,
+                node.id,
+                EdgeKind.PRIMARY,
+            )
         if plan.normalized_radius > 0.08:
             node.fade = 0.0
             self.pending_node_reveals[node.id] = plan.execute_frame

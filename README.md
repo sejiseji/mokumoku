@@ -24,6 +24,8 @@ Cloud Volume Readability Pass では、近接depthをバケット化して描画
 
 Stacked Birth Volume では、既存雲の上端や上昇流の強いノードを刺激した時、新規Seed候補のBirth Volumeを小さめにして上方向へ寄せます。これにより、同じ反応円でも雲房が水平に広がるだけでなく、上へ積み上がる入道雲らしい成長を始めます。
 
+Upper Cloud Attachment では、積み上げ反応で生まれた中心〜中間Seedの一部を刺激元ノードへ接続し、独立した点ではなく既存雲の上に乗った雲房として育つようにしています。外縁Seedは次の共鳴・発芽の余地として残します。
+
 ## Requirements
 
 - Python 3.11+

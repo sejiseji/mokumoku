@@ -294,6 +294,25 @@ class RadialReactionTests(unittest.TestCase):
             / len(spawned_projections),
             upper_projection.screen_y,
         )
+        attached_ids = [
+            node_id
+            for node_id in result.spawned_node_ids
+            if simulation.state.nodes[node_id].parent_node_id == upper.id
+        ]
+        self.assertGreaterEqual(len(attached_ids), 1)
+        self.assertTrue(
+            any(
+                {edge.node_a, edge.node_b} == {upper.id, node_id}
+                for node_id in attached_ids
+                for edge in simulation.state.edges.values()
+            )
+        )
+        self.assertTrue(
+            all(
+                simulation.state.nodes[node_id].lineage_id == upper.lineage_id
+                for node_id in attached_ids
+            )
+        )
 
     def test_radial_reaction_plan_is_deterministic(self) -> None:
         first = radial_signature()
