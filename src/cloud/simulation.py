@@ -492,6 +492,7 @@ class CloudSimulation:
                 for x, y in selected_positions
             ):
                 continue
+            seed_order = len(selected_positions)
             strength = radial_strength(norm, charge) * (0.55 + 0.45 * score)
             selected_positions.append((screen_cx, screen_cy))
             plans.append(
@@ -508,6 +509,8 @@ class CloudSimulation:
                     norm,
                     strength,
                     charge,
+                    extra_delay_frames=seed_order
+                    * config.RADIAL_SEED_REVEAL_STAGGER_FRAMES,
                 )
             )
         plans.sort(
@@ -533,7 +536,14 @@ class CloudSimulation:
         normalized_radius: float,
         strength: float,
         charge: float,
+        extra_delay_frames: int = 0,
     ) -> RadialActionPlan:
+        execute_frame = wave_arrival_frame(
+            release_frame,
+            distance_px,
+            reaction_id,
+            target_node_id or int(screen_x * 17 + screen_y * 31),
+        ) + max(0, extra_delay_frames)
         return RadialActionPlan(
             action_kind=action_kind,
             target_node_id=target_node_id,
@@ -544,12 +554,7 @@ class CloudSimulation:
             normalized_radius=clamp01(normalized_radius),
             radial_strength=radial_strength(normalized_radius, charge),
             effective_strength=clamp01(strength),
-            execute_frame=wave_arrival_frame(
-                release_frame,
-                distance_px,
-                reaction_id,
-                target_node_id or int(screen_x * 17 + screen_y * 31),
-            ),
+            execute_frame=execute_frame,
             zone=radial_zone(normalized_radius),
         )
 
@@ -971,7 +976,7 @@ class CloudSimulation:
             node.density = 1.12
         node.noise = clamp01(0.18 + 0.22 * strength)
         node.untouched_time = 0.0
-        if plan.zone is not RadialZone.CORE:
+        if plan.normalized_radius > 0.08:
             node.fade = 0.0
             self.pending_node_reveals[node.id] = plan.execute_frame
         recompute_clusters(self.state, lineage_id)

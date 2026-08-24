@@ -60,6 +60,22 @@ class RadialReactionTests(unittest.TestCase):
         projection = project_point(created.position, camera)
         self.assertAlmostEqual(projection.screen_x, 160.0, delta=1.0)
         self.assertAlmostEqual(projection.screen_y, 190.0, delta=1.0)
+        create_events = [
+            event for event in result.reaction_events if event.kind is ReactionEventKind.CREATE_SEED
+        ]
+        self.assertEqual(len(create_events), config.BASE_NEW_SEEDS_PER_REACTION)
+        create_frames = [event.execute_frame for event in create_events]
+        self.assertGreaterEqual(
+            max(create_frames) - min(create_frames),
+            (config.BASE_NEW_SEEDS_PER_REACTION - 1)
+            * config.RADIAL_SEED_REVEAL_STAGGER_FRAMES,
+        )
+        hidden_ids = [
+            node_id
+            for node_id in result.spawned_node_ids
+            if simulation.state.nodes[node_id].fade <= 0.0
+        ]
+        self.assertGreaterEqual(len(hidden_ids), config.BASE_NEW_SEEDS_PER_REACTION - 1)
 
     def test_empty_long_reaction_creates_multiple_radial_seeds(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
