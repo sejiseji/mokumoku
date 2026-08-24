@@ -22,6 +22,8 @@ Continuous Camera Dial では、地上下部の横型ダイヤルで yaw を -32
 
 Cloud Volume Readability Pass では、近接depthをバケット化して描画順の細かな反転を抑え、投影上の `INTERNAL` / `EDGE` / `BOTTOM` / `UPDRAFT` などの役割が境界で即座にパタつかないよう、短い保持時間とスコア差によるヒステリシスを入れています。さらにクラスタ内の相対depthから手前・中間・奥のlayerを割り当て、奥の雲房は少し弱い色で描いて立体雲の重なりを読みやすくしています。
 
+Stacked Birth Volume では、既存雲の上端や上昇流の強いノードを刺激した時、新規Seed候補のBirth Volumeを小さめにして上方向へ寄せます。これにより、同じ反応円でも雲房が水平に広がるだけでなく、上へ積み上がる入道雲らしい成長を始めます。
+
 ## Requirements
 
 - Python 3.11+

@@ -5,6 +5,7 @@ import unittest
 from src import config
 from src.camera.camera import build_camera_basis
 from src.camera.projection import camera_depth, project_point
+from src.cloud.graph import add_edge, create_node, recompute_clusters
 from src.cloud.reaction import (
     ReactionEventKind,
     charge_level,
@@ -13,6 +14,8 @@ from src.cloud.reaction import (
     reaction_radius_px,
 )
 from src.cloud.simulation import CloudSimulation
+from src.enums import EdgeKind
+from src.math3d import Vec3
 from src.rng import RandomSource
 
 
@@ -234,6 +237,63 @@ class RadialReactionTests(unittest.TestCase):
 
         self.assertLess(inner_distance, outer_distance)
         self.assertGreater(inner_radius, outer_radius + 2.0)
+
+    def test_reacting_to_top_node_stacks_new_seed_volume_upward(self) -> None:
+        simulation = CloudSimulation(RandomSource(24680))
+        camera = build_camera_basis(0.0)
+        root_result = simulation.radial_reaction_screen(160.0, 210.0, 0.05, camera)
+        root = simulation.state.nodes[root_result.spawned_node_ids[0]]
+        upper = create_node(
+            simulation.state,
+            root.lineage_id,
+            root.cluster_id,
+            root.position + Vec3(0.0, 28.0, 0.0),
+            simulation.rng,
+            parent_node_id=root.id,
+            generation=1,
+        )
+        upper.updraft = 0.62
+        add_edge(
+            simulation.state,
+            root.lineage_id,
+            root.cluster_id,
+            root.id,
+            upper.id,
+            EdgeKind.PRIMARY,
+        )
+        recompute_clusters(simulation.state, root.lineage_id)
+        upper_projection = project_point(upper.position, camera)
+
+        result = simulation.radial_reaction_screen(
+            upper_projection.screen_x,
+            upper_projection.screen_y,
+            0.95,
+            camera,
+            target_node_id=upper.id,
+        )
+
+        self.assertGreaterEqual(len(result.spawned_node_ids), 2)
+        spawned_projections = [
+            project_point(simulation.state.nodes[node_id].position, camera)
+            for node_id in result.spawned_node_ids
+        ]
+        upper_seed_count = sum(
+            1
+            for projection in spawned_projections
+            if projection.screen_y < upper_projection.screen_y - 4.0
+        )
+        lower_seed_count = sum(
+            1
+            for projection in spawned_projections
+            if projection.screen_y > upper_projection.screen_y + 4.0
+        )
+
+        self.assertGreater(upper_seed_count, lower_seed_count)
+        self.assertLess(
+            sum(projection.screen_y for projection in spawned_projections)
+            / len(spawned_projections),
+            upper_projection.screen_y,
+        )
 
     def test_radial_reaction_plan_is_deterministic(self) -> None:
         first = radial_signature()

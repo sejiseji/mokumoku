@@ -481,6 +481,7 @@ class CloudSimulation:
             plane_depth,
             origin_world,
             lineage_id,
+            primary_node_id,
         )
         selected_positions: list[tuple[float, float]] = []
         for screen_cx, screen_cy, position, norm, score in create_candidates:
@@ -604,11 +605,19 @@ class CloudSimulation:
         plane_depth: float,
         origin_world: Vec3,
         lineage_id: int,
+        primary_node_id: int | None = None,
     ) -> list[tuple[float, float, Vec3, float, float]]:
         del origin_world, lineage_id
         candidates: list[tuple[float, float, float, float, Vec3, float]] = []
         birth_basis = radial_birth_basis(camera)
+        stack_t = self.radial_stack_factor(primary_node_id, camera)
         horizontal_radius = radial_birth_horizontal_radius(radius_px)
+        if stack_t > 0.0:
+            horizontal_radius *= lerp_config(
+                1.0,
+                config.RADIAL_STACK_HORIZONTAL_SCALE,
+                stack_t,
+            )
         vertical_ratio = lerp_config(
             config.RADIAL_BIRTH_VERTICAL_RATIO_MIN,
             config.RADIAL_BIRTH_VERTICAL_RATIO_MAX,
@@ -620,7 +629,11 @@ class CloudSimulation:
             charge,
         )
         vertical_radius = horizontal_radius * vertical_ratio
-        depth_radius = horizontal_radius * depth_ratio
+        depth_radius = horizontal_radius * depth_ratio * lerp_config(
+            1.0,
+            config.RADIAL_STACK_DEPTH_SCALE,
+            stack_t,
+        )
         center_world = screen_to_world_in_cloud_bounds(
             screen_x,
             screen_y,
@@ -630,7 +643,13 @@ class CloudSimulation:
         center_world = clamp_radial_birth_center(
             center_world
             + birth_basis[1]
-            * (vertical_radius * config.RADIAL_BIRTH_CENTER_UP_SHIFT_RATIO),
+            * (
+                vertical_radius
+                * (
+                    config.RADIAL_BIRTH_CENTER_UP_SHIFT_RATIO
+                    + config.RADIAL_STACK_CENTER_UP_SHIFT_RATIO * stack_t
+                )
+            ),
             vertical_radius,
             depth_radius,
         )
@@ -648,6 +667,14 @@ class CloudSimulation:
             distance = normalized * radius_px
             candidate_x = screen_x + math.cos(angle) * distance
             candidate_y = screen_y + math.sin(angle) * distance
+            if stack_t > 0.0 and index > 0:
+                candidate_y -= (
+                    radius_px
+                    * config.RADIAL_STACK_SCREEN_UP_SHIFT_RATIO
+                    * stack_t
+                    * (0.35 + normalized * 0.65)
+                )
+                distance = math.hypot(candidate_x - screen_x, candidate_y - screen_y)
             if candidate_y >= config.SKY_BOTTOM_Y - 6:
                 continue
             if candidate_x < 8 or candidate_x > config.SCREEN_WIDTH - 8:
@@ -690,6 +717,14 @@ class CloudSimulation:
                 camera,
                 plane_depth,
             )
+            if stack_t > 0.0:
+                vertical_delta = (screen_y - candidate_y) / max(1.0, radius_px)
+                if vertical_delta > 0.0:
+                    score += config.RADIAL_STACK_UP_SCORE_BONUS * stack_t * clamp01(
+                        vertical_delta
+                    )
+                else:
+                    score += config.RADIAL_STACK_DOWN_SCORE_PENALTY * stack_t * vertical_delta
             if index == 0:
                 score += 0.35
             candidates.append((score, normalized, candidate_x, candidate_y, position, distance))
@@ -704,6 +739,37 @@ class CloudSimulation:
             (x, y, position, normalized, score)
             for score, normalized, x, y, position, _distance in candidates
         ]
+
+    def radial_stack_factor(
+        self,
+        primary_node_id: int | None,
+        camera: CameraBasis,
+    ) -> float:
+        if primary_node_id is None or primary_node_id not in self.state.nodes:
+            return 0.0
+        node = self.state.nodes[primary_node_id]
+        if node.fade <= 0.0 or node.is_pruning:
+            return 0.0
+        projection = project_point(node.position, camera)
+        if not projection.visible:
+            return 0.0
+
+        gap = max(6.0, node.radius * projection.scale * 0.45)
+        has_above = False
+        for other in self.state.live_nodes():
+            if other.id == node.id or other.cluster_id != node.cluster_id:
+                continue
+            other_projection = project_point(other.position, camera)
+            if not other_projection.visible:
+                continue
+            if other_projection.screen_y < projection.screen_y - gap:
+                has_above = True
+                break
+
+        top_exposure = 0.0 if has_above else 1.0
+        updraft_factor = clamp01((node.updraft - 0.25) / 0.50)
+        activation_factor = clamp01((node.activation - 0.50) / 0.45) * 0.25
+        return clamp01(max(top_exposure * 0.72, updraft_factor) + activation_factor)
 
     def radial_create_candidate_score(
         self,
