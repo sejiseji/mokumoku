@@ -18,6 +18,7 @@ from src.camera.camera import build_camera_basis
 from src.camera.projection import project_point
 from src.cloud.graph import add_edge, create_node, recompute_clusters
 from src.cloud.rendering import (
+    BodyPayload,
     BridgePayload,
     CloudDepthLayer,
     EdgePayload,
@@ -27,6 +28,7 @@ from src.cloud.rendering import (
     choose_cloud_sprite_family,
     cloud_bridge_count,
     cloud_node_wobble,
+    cloud_surface_metrics,
     collect_cloud_render_items,
     depth_sort_bucket,
     render_item_sort_key,
@@ -714,6 +716,88 @@ class AssetsRenderingWebTests(unittest.TestCase):
         )
 
         self.assertEqual(intensity, 0.0)
+
+    def test_dense_cloud_adds_body_pass_and_reduces_surface_lobes(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        center = simulation.state.nodes[result.node_id]
+        offsets = (
+            Vec3(-11.0, 0.0, 0.0),
+            Vec3(11.0, 0.0, 0.0),
+            Vec3(0.0, -11.0, 0.0),
+            Vec3(0.0, 11.0, 0.0),
+            Vec3(-8.0, -8.0, 4.0),
+            Vec3(8.0, -8.0, -4.0),
+            Vec3(-8.0, 8.0, -4.0),
+            Vec3(8.0, 8.0, 4.0),
+        )
+        for offset in offsets:
+            node = create_node(
+                simulation.state,
+                center.lineage_id,
+                center.cluster_id,
+                center.position + offset,
+                simulation.rng,
+                parent_node_id=center.id,
+                generation=1,
+            )
+            node.mass = config.SEED_MASS + 5.0
+
+        items = collect_cloud_render_items(simulation.state, camera)
+        body_payloads = [
+            item.payload for item in items if isinstance(item.payload, BodyPayload)
+        ]
+        node_payloads = [
+            item.payload for item in items if isinstance(item.payload, NodePayload)
+        ]
+
+        self.assertGreaterEqual(len(body_payloads), 1)
+        self.assertLess(len(node_payloads), len(simulation.state.live_nodes()))
+
+    def test_surface_metrics_use_unconnected_projected_neighbors(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        center = simulation.state.nodes[result.node_id]
+        offsets = (
+            Vec3(-10.0, 0.0, 0.0),
+            Vec3(10.0, 0.0, 0.0),
+            Vec3(0.0, -10.0, 0.0),
+            Vec3(0.0, 10.0, 0.0),
+        )
+        neighbors = [
+            create_node(
+                simulation.state,
+                center.lineage_id,
+                center.cluster_id,
+                center.position + offset,
+                simulation.rng,
+                parent_node_id=None,
+                generation=1,
+            )
+            for offset in offsets
+        ]
+        isolated = create_node(
+            simulation.state,
+            center.lineage_id,
+            center.cluster_id,
+            center.position + Vec3(80.0, 0.0, 0.0),
+            simulation.rng,
+            parent_node_id=None,
+            generation=1,
+        )
+        visible_nodes = [
+            (node, project_point(node.position, camera))
+            for node in (center, *neighbors, isolated)
+        ]
+
+        metrics = cloud_surface_metrics(visible_nodes)
+
+        self.assertLess(metrics[center.id].exposure, metrics[isolated.id].exposure)
+        self.assertGreaterEqual(metrics[center.id].neighbor_count, 4)
 
     def test_web_html_postprocess_disables_gamepad_and_touch_scrolling(self) -> None:
         html_path = PROJECT_ROOT / "docs" / "_postprocess_test.html"

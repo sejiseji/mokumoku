@@ -39,10 +39,26 @@ class BridgePayload:
     visual_radius: float
 
 
+@dataclass(frozen=True)
+class BodyPayload:
+    source_id: int
+    cluster_id: int
+    point: ProjectedPoint
+    sprite: SpriteRect
+    visual_radius: float
+
+
 class CloudDepthLayer(IntEnum):
     FRONT = 0
     MIDDLE = 1
     BACK = 2
+
+
+@dataclass(frozen=True)
+class SurfaceMetrics:
+    exposure: float
+    exposure_mask: int
+    neighbor_count: int
 
 
 @dataclass(frozen=True)
@@ -66,7 +82,7 @@ class RenderItem:
     depth: float
     layer_bias: int
     stable_id: int
-    payload: EdgePayload | BridgePayload | NodePayload
+    payload: EdgePayload | BridgePayload | BodyPayload | NodePayload
 
 
 def depth_sort_bucket(depth: float) -> int:
@@ -97,6 +113,279 @@ def cloud_depth_layer(
     if depth_t >= config.CLOUD_DEPTH_BACK_THRESHOLD:
         return CloudDepthLayer.BACK
     return CloudDepthLayer.MIDDLE
+
+
+def visible_lineage_node_counts(
+    visible_nodes: list[tuple[CloudNode, ProjectedPoint]],
+) -> dict[int, int]:
+    counts: dict[int, int] = {}
+    for node, _projection in visible_nodes:
+        counts[node.lineage_id] = counts.get(node.lineage_id, 0) + 1
+    return counts
+
+
+def cloud_surface_metrics(
+    visible_nodes: list[tuple[CloudNode, ProjectedPoint]],
+) -> dict[int, SurfaceMetrics]:
+    metrics: dict[int, SurfaceMetrics] = {}
+    direction_count = max(4, config.CLOUD_SURFACE_DIRECTION_COUNT)
+    directions = tuple(
+        (
+            math.cos(math.tau * index / direction_count),
+            math.sin(math.tau * index / direction_count),
+        )
+        for index in range(direction_count)
+    )
+    projected_radii = {
+        node.id: max(1.0, node.radius * projection.scale)
+        for node, projection in visible_nodes
+    }
+
+    for node, projection in visible_nodes:
+        radius = projected_radii[node.id]
+        neighbor_count = 0
+        exposed_mask = 0
+        for other, other_projection in visible_nodes:
+            if other.id == node.id or other.lineage_id != node.lineage_id:
+                continue
+            other_radius = projected_radii[other.id]
+            distance = math.hypot(
+                other_projection.screen_x - projection.screen_x,
+                other_projection.screen_y - projection.screen_y,
+            )
+            if (
+                distance
+                <= (radius + other_radius) * config.CLOUD_SURFACE_NEIGHBOR_RADIUS_SCALE
+            ):
+                neighbor_count += 1
+
+        for index, (dx, dy) in enumerate(directions):
+            sample_x = projection.screen_x + dx * radius
+            sample_y = projection.screen_y + dy * radius
+            covered = False
+            for other, other_projection in visible_nodes:
+                if other.id == node.id or other.lineage_id != node.lineage_id:
+                    continue
+                other_radius = projected_radii[other.id]
+                center_distance = math.hypot(
+                    other_projection.screen_x - projection.screen_x,
+                    other_projection.screen_y - projection.screen_y,
+                )
+                if (
+                    center_distance
+                    > (radius + other_radius)
+                    * config.CLOUD_SURFACE_NEIGHBOR_RADIUS_SCALE
+                ):
+                    continue
+                sample_distance = math.hypot(
+                    other_projection.screen_x - sample_x,
+                    other_projection.screen_y - sample_y,
+                )
+                if sample_distance <= other_radius * config.CLOUD_SURFACE_OCCLUSION_RADIUS_SCALE:
+                    covered = True
+                    break
+            if not covered:
+                exposed_mask |= 1 << index
+        exposure = exposed_mask.bit_count() / direction_count
+        metrics[node.id] = SurfaceMetrics(exposure, exposed_mask, neighbor_count)
+    return metrics
+
+
+def protected_surface_lobe_ids(
+    visible_nodes: list[tuple[CloudNode, ProjectedPoint]],
+    frame: int,
+    motion_runtime: WeatherMotionRuntime | None,
+) -> set[int]:
+    if motion_runtime is None:
+        return set()
+    protected: set[int] = set()
+    for node, _projection in visible_nodes:
+        if motion_runtime.response_kind(node.id, frame) is not None:
+            protected.add(node.id)
+    return protected
+
+
+def select_surface_lobe_ids(
+    visible_nodes: list[tuple[CloudNode, ProjectedPoint]],
+    surface_metrics: dict[int, SurfaceMetrics],
+    visible_group_counts: dict[int, int],
+    protected_node_ids: set[int],
+) -> set[int]:
+    selected: set[int] = set()
+    candidates_by_group: dict[int, list[tuple[float, CloudNode, ProjectedPoint]]] = {}
+    for node, projection in visible_nodes:
+        metric = surface_metrics.get(node.id, SurfaceMetrics(1.0, 0, 0))
+        group_count = visible_group_counts.get(node.lineage_id, 1)
+        if (
+            group_count < config.CLOUD_SURFACE_MIN_CLUSTER_NODES
+            or metric.neighbor_count < 3
+            or node.id in protected_node_ids
+            or node.is_pruning
+            or node.fade < 0.7
+            or is_visible_dormant_seed(node, metric)
+        ):
+            selected.add(node.id)
+            continue
+        if metric.exposure < config.CLOUD_SURFACE_INTERNAL_EXPOSURE:
+            continue
+        score = surface_lobe_score(node, projection, metric)
+        candidates_by_group.setdefault(node.lineage_id, []).append((score, node, projection))
+
+    for candidates in candidates_by_group.values():
+        candidates.sort(key=lambda item: (-item[0], item[1].id))
+        max_lobes = max(
+            config.CLOUD_SURFACE_MIN_LOBES,
+            int(math.ceil(len(candidates) * config.CLOUD_SURFACE_MAX_LOBE_RATIO)),
+        )
+        accepted: list[tuple[CloudNode, ProjectedPoint]] = []
+        for _score, node, projection in candidates:
+            if len(accepted) >= max_lobes:
+                break
+            radius = max(1.0, node.radius * projection.scale)
+            suppressed = False
+            for accepted_node, accepted_projection in accepted:
+                accepted_radius = max(1.0, accepted_node.radius * accepted_projection.scale)
+                distance = math.hypot(
+                    accepted_projection.screen_x - projection.screen_x,
+                    accepted_projection.screen_y - projection.screen_y,
+                )
+                if (
+                    distance
+                    < max(radius, accepted_radius)
+                    * config.CLOUD_SURFACE_SUPPRESSION_RADIUS_RATIO
+                ):
+                    suppressed = True
+                    break
+            if suppressed:
+                continue
+            selected.add(node.id)
+            accepted.append((node, projection))
+    return selected
+
+
+def surface_lobe_score(
+    node: CloudNode,
+    projection: ProjectedPoint,
+    metric: SurfaceMetrics,
+) -> float:
+    screen_radius = node.radius * projection.scale
+    radius_score = min(1.0, screen_radius / 20.0)
+    upper_score = min(1.0, max(0.0, node.updraft))
+    stability_score = min(1.0, node.incubation)
+    seed_score = ((node.sprite_seed % 997) / 997.0) * 0.08
+    return (
+        0.42 * metric.exposure
+        + 0.24 * radius_score
+        + 0.14 * upper_score
+        + 0.12 * stability_score
+        + seed_score
+    )
+
+
+def is_visible_dormant_seed(node: CloudNode, metric: SurfaceMetrics) -> bool:
+    if node.mass > config.SEED_MASS + 2.0:
+        return False
+    if node.excitation >= config.CLOUD_BODY_SEED_ABSORB_EXCITATION:
+        return False
+    return metric.neighbor_count <= 1
+
+
+def cloud_body_payloads(
+    state: CloudState,
+    visible_nodes: list[tuple[CloudNode, ProjectedPoint]],
+    surface_metrics: dict[int, SurfaceMetrics],
+    visible_group_counts: dict[int, int],
+    camera: CameraBasis,
+) -> list[BodyPayload]:
+    payloads: list[BodyPayload] = []
+    for node, projection in visible_nodes:
+        metric = surface_metrics.get(node.id, SurfaceMetrics(1.0, 0, 0))
+        if not should_draw_body_stamp(node, state, metric, visible_group_counts):
+            continue
+        visual_radius = node.radius * projection.scale * config.CLOUD_BODY_RADIUS_SCALE
+        payloads.append(
+            BodyPayload(
+                source_id=node.id,
+                cluster_id=node.cluster_id,
+                point=projection,
+                sprite=cloud_sprite_rect(
+                    CloudSpriteFamily.INTERNAL,
+                    size_class_for_screen_radius(visual_radius * max(0.45, node.fade)),
+                    0,
+                ),
+                visual_radius=visual_radius,
+            )
+        )
+    payloads.extend(cloud_body_gap_payloads(visible_nodes, camera))
+    return payloads
+
+
+def should_draw_body_stamp(
+    node: CloudNode,
+    state: CloudState,
+    metric: SurfaceMetrics,
+    visible_group_counts: dict[int, int],
+) -> bool:
+    if node.is_pruning or node.fade <= 0.0:
+        return False
+    if node_edge_count(node.id, state) > 0:
+        return True
+    if metric.neighbor_count >= 2:
+        return True
+    if visible_group_counts.get(node.lineage_id, 1) >= config.CLOUD_SURFACE_MIN_CLUSTER_NODES:
+        return node.excitation >= config.CLOUD_BODY_SEED_ABSORB_EXCITATION
+    return node.mass > config.SEED_MASS + config.TAP_MASS_GAIN * 0.45
+
+
+def cloud_body_gap_payloads(
+    visible_nodes: list[tuple[CloudNode, ProjectedPoint]],
+    camera: CameraBasis,
+) -> list[BodyPayload]:
+    pair_candidates: dict[int, list[tuple[float, BodyPayload]]] = {}
+    for index, (node_a, projection_a) in enumerate(visible_nodes):
+        radius_a = max(1.0, node_a.radius * projection_a.scale)
+        for node_b, projection_b in visible_nodes[index + 1 :]:
+            if node_a.lineage_id != node_b.lineage_id:
+                continue
+            radius_b = max(1.0, node_b.radius * projection_b.scale)
+            distance = math.hypot(
+                projection_b.screen_x - projection_a.screen_x,
+                projection_b.screen_y - projection_a.screen_y,
+            )
+            radius_sum = radius_a + radius_b
+            distance_ratio = distance / max(1.0, radius_sum)
+            if distance_ratio < config.CLOUD_BODY_GAP_MIN_DISTANCE_RATIO:
+                continue
+            if distance_ratio > config.CLOUD_BODY_GAP_MAX_DISTANCE_RATIO:
+                continue
+            midpoint = node_a.position.lerp(node_b.position, 0.5)
+            midpoint_projection = project_point(midpoint, camera)
+            if not midpoint_projection.visible:
+                continue
+            visual_radius = min(radius_a, radius_b) * config.CLOUD_BODY_GAP_RADIUS_SCALE
+            source_id = 1_000_000 + min(node_a.id, node_b.id) * 4099 + max(node_a.id, node_b.id)
+            payload = BodyPayload(
+                source_id=source_id,
+                cluster_id=node_a.cluster_id,
+                point=midpoint_projection,
+                sprite=cloud_sprite_rect(
+                    CloudSpriteFamily.INTERNAL,
+                    size_class_for_screen_radius(visual_radius),
+                    0,
+                ),
+                visual_radius=visual_radius,
+            )
+            pair_candidates.setdefault(node_a.lineage_id, []).append(
+                (abs(distance_ratio - 0.72), payload)
+            )
+    payloads: list[BodyPayload] = []
+    for candidates in pair_candidates.values():
+        candidates.sort(key=lambda item: (item[0], item[1].source_id))
+        payloads.extend(
+            payload
+            for _score, payload in candidates[: config.CLOUD_BODY_GAP_MAX_PER_CLUSTER]
+        )
+    return payloads
 
 
 def collect_cloud_render_items(
@@ -132,6 +421,37 @@ def collect_cloud_render_items(
             frame,
             motion_runtime,
         )
+    surface_metrics = cloud_surface_metrics(visible_nodes)
+    visible_lineage_counts = visible_lineage_node_counts(visible_nodes)
+    protected_lobe_ids = protected_surface_lobe_ids(
+        visible_nodes,
+        frame,
+        motion_runtime,
+    )
+    surface_lobe_ids = select_surface_lobe_ids(
+        visible_nodes,
+        surface_metrics,
+        visible_lineage_counts,
+        protected_lobe_ids,
+    )
+
+    for body_index, body in enumerate(
+        cloud_body_payloads(
+            state,
+            visible_nodes,
+            surface_metrics,
+            visible_lineage_counts,
+            camera,
+        )
+    ):
+        items.append(
+            RenderItem(
+                depth=body.point.depth,
+                layer_bias=1,
+                stable_id=body.source_id * 10_000 + body_index,
+                payload=body,
+            )
+        )
 
     for edge in state.live_edges():
         node_a = state.nodes[edge.node_a]
@@ -159,7 +479,7 @@ def collect_cloud_render_items(
                 items.append(
                     RenderItem(
                         depth=bridge.point.depth,
-                        layer_bias=1,
+                        layer_bias=2,
                         stable_id=edge.id * 10 + bridge_index,
                         payload=bridge,
                     )
@@ -191,9 +511,17 @@ def collect_cloud_render_items(
                     motion_atlas.cloud_growth_ease,
                 )
                 response_kind = motion_runtime.response_kind(node.id, frame)
+        if node.id not in surface_lobe_ids and response_kind is None and growth_level <= 0:
+            continue
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
         mesh_phase = single_node_mesh_phase(node, frame)
-        family_scores = cloud_sprite_family_scores(node, state, camera, projection)
+        family_scores = cloud_sprite_family_scores(
+            node,
+            state,
+            camera,
+            projection,
+            surface_metrics,
+        )
         family = select_cloud_sprite_family(family_scores)
         if motion_runtime is not None:
             family = motion_runtime.stabilize_sprite_family(
@@ -212,7 +540,7 @@ def collect_cloud_render_items(
         items.append(
             RenderItem(
                 depth=projection.depth,
-                layer_bias=2,
+                layer_bias=3,
                 stable_id=node.id,
                 payload=NodePayload(
                     node,
@@ -475,6 +803,7 @@ def cloud_sprite_family_scores(
     state: CloudState,
     camera: CameraBasis | None = None,
     projection: ProjectedPoint | None = None,
+    surface_metrics: dict[int, SurfaceMetrics] | None = None,
 ) -> dict[CloudSpriteFamily, float]:
     if node.is_pruning or node.fade < 0.7:
         return {CloudSpriteFamily.FADE: 1.0}
@@ -498,12 +827,14 @@ def cloud_sprite_family_scores(
                 neighbor_projections.append(neighbor_projection)
 
     if projection is not None and neighbor_projections:
-        return projected_cloud_sprite_family_scores(
+        scores = projected_cloud_sprite_family_scores(
             node,
             edge_count,
             projection,
             neighbor_projections,
         )
+        apply_surface_metric_family_bias(node, scores, surface_metrics)
+        return scores
 
     scores: dict[CloudSpriteFamily, float] = {CloudSpriteFamily.STRETCH: 0.42}
     if node.updraft > 0.35:
@@ -516,7 +847,43 @@ def cloud_sprite_family_scores(
         scores[CloudSpriteFamily.INTERNAL] = 0.74
     if has_primary_edge:
         scores[CloudSpriteFamily.EDGE] = 0.68
+    apply_surface_metric_family_bias(node, scores, surface_metrics)
     return scores
+
+
+def apply_surface_metric_family_bias(
+    node: CloudNode,
+    scores: dict[CloudSpriteFamily, float],
+    surface_metrics: dict[int, SurfaceMetrics] | None,
+) -> None:
+    if surface_metrics is None:
+        return
+    metric = surface_metrics.get(node.id)
+    if metric is None:
+        return
+    if metric.exposure < config.CLOUD_SURFACE_INTERNAL_EXPOSURE:
+        scores[CloudSpriteFamily.INTERNAL] = max(
+            scores.get(CloudSpriteFamily.INTERNAL, 0.0),
+            1.05,
+        )
+        scores[CloudSpriteFamily.EDGE] = min(scores.get(CloudSpriteFamily.EDGE, 0.0), 0.34)
+        scores.pop(CloudSpriteFamily.FRAGMENT, None)
+        return
+    if metric.exposure < config.CLOUD_SURFACE_WEAK_EXPOSURE:
+        scores[CloudSpriteFamily.INTERNAL] = max(
+            scores.get(CloudSpriteFamily.INTERNAL, 0.0),
+            0.82,
+        )
+        scores[CloudSpriteFamily.EDGE] = max(scores.get(CloudSpriteFamily.EDGE, 0.0), 0.48)
+        scores.pop(CloudSpriteFamily.FRAGMENT, None)
+        return
+    if metric.exposure >= config.CLOUD_SURFACE_STRONG_EXPOSURE:
+        scores[CloudSpriteFamily.EDGE] = max(scores.get(CloudSpriteFamily.EDGE, 0.0), 0.78)
+        if node.updraft > 0.35:
+            scores[CloudSpriteFamily.UPDRAFT] = max(
+                scores.get(CloudSpriteFamily.UPDRAFT, 0.0),
+                0.86,
+            )
 
 
 def choose_cloud_sprite_family(

@@ -12,6 +12,7 @@ from src.camera.projection import camera_depth
 from src.cloud.incubation import build_adjacency, node_retention_score
 from src.cloud.reaction import ReactionEventKind, charge_level, reaction_radius_px
 from src.cloud.rendering import (
+    BodyPayload,
     BridgePayload,
     CloudDepthLayer,
     EdgePayload,
@@ -586,6 +587,8 @@ class MokumokuApp:
             if isinstance(item.payload, EdgePayload):
                 if should_draw_edge_payload(self.debug_enabled):
                     self.draw_edge_payload(item.payload)
+            elif isinstance(item.payload, BodyPayload):
+                self.draw_body_payload(item.payload)
             elif isinstance(item.payload, BridgePayload):
                 self.draw_bridge_payload(item.payload)
             elif isinstance(item.payload, NodePayload):
@@ -622,6 +625,28 @@ class MokumokuApp:
             )
         else:
             radius = max(2, int(sprite.width / 2))
+            pyxel.circ(int(projection.screen_x), int(projection.screen_y), radius, 7)
+
+    def draw_body_payload(self, payload: BodyPayload) -> None:
+        pyxel = self.pyxel
+        projection = payload.point
+        sprite = payload.sprite
+        x = int(projection.screen_x - sprite.width / 2)
+        y = int(projection.screen_y - sprite.height / 2)
+
+        if self.assets_loaded:
+            pyxel.blt(
+                x,
+                y,
+                sprite.image,
+                sprite.u,
+                sprite.v,
+                sprite.width,
+                sprite.height,
+                sprite.colkey,
+            )
+        else:
+            radius = max(2, int(payload.visual_radius))
             pyxel.circ(int(projection.screen_x), int(projection.screen_y), radius, 7)
 
     def draw_node_payload(self, payload: NodePayload) -> None:
