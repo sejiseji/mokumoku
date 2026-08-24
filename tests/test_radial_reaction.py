@@ -4,7 +4,7 @@ import unittest
 
 from src import config
 from src.camera.camera import build_camera_basis
-from src.camera.projection import project_point
+from src.camera.projection import camera_depth, project_point
 from src.cloud.reaction import (
     ReactionEventKind,
     charge_level,
@@ -115,6 +115,37 @@ class RadialReactionTests(unittest.TestCase):
             event for event in long.reaction_events if event.kind is ReactionEventKind.CREATE_SEED
         ]
         self.assertEqual(len(created_events), long.reaction_summary.created_seeds)
+
+    def test_radial_seed_birth_volume_has_front_and_back_depth(self) -> None:
+        simulation = CloudSimulation(RandomSource(97531))
+        camera = build_camera_basis(0.0)
+
+        result = simulation.radial_reaction_screen(160.0, 190.0, 0.95, camera)
+
+        self.assertGreaterEqual(len(result.spawned_node_ids), 5)
+        center_id = result.spawned_node_ids[0]
+        center_depth = camera_depth(simulation.state.nodes[center_id].position, camera)
+        depth_offsets = [
+            camera_depth(simulation.state.nodes[node_id].position, camera) - center_depth
+            for node_id in result.spawned_node_ids[1:]
+        ]
+        self.assertGreater(max(depth_offsets), 8.0)
+        self.assertLess(min(depth_offsets), -8.0)
+        for node_id in result.spawned_node_ids:
+            node = simulation.state.nodes[node_id]
+            self.assertGreaterEqual(node.position.z, config.CLOUD_DEPTH_MIN)
+            self.assertLessEqual(node.position.z, config.CLOUD_DEPTH_MAX)
+
+    def test_center_radial_seed_remains_at_tap_position_after_depth_lift(self) -> None:
+        simulation = CloudSimulation(RandomSource(86420))
+        camera = build_camera_basis(0.0)
+
+        result = simulation.radial_reaction_screen(174.0, 186.0, 0.95, camera)
+
+        center = simulation.state.nodes[result.spawned_node_ids[0]]
+        projection = project_point(center.position, camera)
+        self.assertAlmostEqual(projection.screen_x, 174.0, delta=1.0)
+        self.assertAlmostEqual(projection.screen_y, 186.0, delta=1.0)
 
     def test_dense_reaction_creates_new_seed_and_interferes_with_existing_nodes(self) -> None:
         dense = CloudSimulation(RandomSource(12345))

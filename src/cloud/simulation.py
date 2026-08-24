@@ -607,6 +607,33 @@ class CloudSimulation:
     ) -> list[tuple[float, float, Vec3, float, float]]:
         del origin_world, lineage_id
         candidates: list[tuple[float, float, float, float, Vec3, float]] = []
+        birth_basis = radial_birth_basis(camera)
+        horizontal_radius = radial_birth_horizontal_radius(radius_px)
+        vertical_ratio = lerp_config(
+            config.RADIAL_BIRTH_VERTICAL_RATIO_MIN,
+            config.RADIAL_BIRTH_VERTICAL_RATIO_MAX,
+            charge,
+        )
+        depth_ratio = lerp_config(
+            config.RADIAL_BIRTH_DEPTH_RATIO_MIN,
+            config.RADIAL_BIRTH_DEPTH_RATIO_MAX,
+            charge,
+        )
+        vertical_radius = horizontal_radius * vertical_ratio
+        depth_radius = horizontal_radius * depth_ratio
+        center_world = screen_to_world_in_cloud_bounds(
+            screen_x,
+            screen_y,
+            plane_depth,
+            camera,
+        )
+        center_world = clamp_radial_birth_center(
+            center_world
+            + birth_basis[1]
+            * (vertical_radius * config.RADIAL_BIRTH_CENTER_UP_SHIFT_RATIO),
+            vertical_radius,
+            depth_radius,
+        )
         golden_angle = math.pi * (3.0 - math.sqrt(5.0))
         raw_points: list[tuple[float, float, int]] = [(0.0, 0.0, 0)]
         for index in range(1, config.RADIAL_CANDIDATE_COUNT + 1):
@@ -635,16 +662,27 @@ class CloudSimulation:
                 config.REACTION_REUSE_RADIUS_PX,
             ):
                 continue
-            position = screen_to_world_in_cloud_bounds(
-                candidate_x,
-                candidate_y,
-                plane_depth,
-                camera,
-            )
-            depth_jitter = (
-                stable_hash01(reaction_id, index, 0xCA13) * 2.0 - 1.0
-            ) * config.SPROUT_DEPTH_JITTER_MAX
-            position = clamp_cloud_position(position + camera.forward * depth_jitter)
+            if index == 0:
+                position = screen_to_world_in_cloud_bounds(
+                    candidate_x,
+                    candidate_y,
+                    plane_depth,
+                    camera,
+                )
+            else:
+                screen_u = (candidate_x - screen_x) / max(1.0, radius_px)
+                screen_v = (screen_y - candidate_y) / max(1.0, radius_px)
+                depth_factor = radial_birth_depth_factor(index)
+                position = lift_radial_candidate_into_ellipsoid(
+                    center_world,
+                    birth_basis,
+                    screen_u,
+                    screen_v,
+                    depth_factor,
+                    horizontal_radius,
+                    vertical_radius,
+                    depth_radius,
+                )
             score = self.radial_create_candidate_score(
                 candidate_x,
                 candidate_y,
@@ -2134,3 +2172,82 @@ def upward_bias(direction_index: int) -> float:
 
 def seed_resonance_sensitivity(trait_seed: int) -> float:
     return 0.88 + stable_hash01(trait_seed, 0xEC01) * 0.24
+
+
+def radial_birth_basis(camera: CameraBasis) -> tuple[Vec3, Vec3, Vec3]:
+    world_up = Vec3(0.0, 1.0, 0.0)
+    horizontal = camera.right - world_up * camera.right.dot(world_up)
+    try:
+        horizontal = horizontal.normalized()
+    except ValueError:
+        horizontal = Vec3(1.0, 0.0, 0.0)
+    depth_axis = horizontal.cross(world_up)
+    if depth_axis.dot(camera.forward) < 0.0:
+        depth_axis = depth_axis * -1.0
+    try:
+        depth_axis = depth_axis.normalized()
+    except ValueError:
+        depth_axis = Vec3(0.0, 0.0, 1.0)
+    return horizontal, world_up, depth_axis
+
+
+def radial_birth_horizontal_radius(radius_px: float) -> float:
+    t = clamp01(
+        (radius_px - config.MIN_REACTION_RADIUS_PX)
+        / max(1.0, config.MAX_REACTION_RADIUS_PX - config.MIN_REACTION_RADIUS_PX)
+    )
+    return lerp_config(
+        config.RADIAL_BIRTH_HORIZONTAL_RADIUS_MIN,
+        config.RADIAL_BIRTH_HORIZONTAL_RADIUS_MAX,
+        t,
+    )
+
+
+def radial_birth_depth_factor(index: int) -> float:
+    sequence = (0.0, 0.82, -0.82, 0.45, -0.45, 0.68, -0.68, 0.24, -0.24)
+    return sequence[index % len(sequence)]
+
+
+def lift_radial_candidate_into_ellipsoid(
+    center: Vec3,
+    basis: tuple[Vec3, Vec3, Vec3],
+    screen_u: float,
+    screen_v: float,
+    depth_factor: float,
+    horizontal_radius: float,
+    vertical_radius: float,
+    depth_radius: float,
+) -> Vec3:
+    disk_r2 = min(1.0, screen_u * screen_u + screen_v * screen_v)
+    available_depth = depth_radius * math.sqrt(max(0.0, 1.0 - disk_r2))
+    horizontal, world_up, depth_axis = basis
+    return clamp_cloud_position(
+        center
+        + horizontal * (horizontal_radius * screen_u)
+        + world_up * (vertical_radius * screen_v)
+        + depth_axis * (available_depth * depth_factor)
+    )
+
+
+def clamp_radial_birth_center(
+    center: Vec3,
+    vertical_radius: float,
+    depth_radius: float,
+) -> Vec3:
+    y_min = config.MIN_CLOUD_Y + vertical_radius
+    y_max = config.MAX_CLOUD_Y - vertical_radius
+    z_min = config.CLOUD_DEPTH_MIN + depth_radius
+    z_max = config.CLOUD_DEPTH_MAX - depth_radius
+    if y_min > y_max:
+        y = (config.MIN_CLOUD_Y + config.MAX_CLOUD_Y) * 0.5
+    else:
+        y = min(max(center.y, y_min), y_max)
+    if z_min > z_max:
+        z = (config.CLOUD_DEPTH_MIN + config.CLOUD_DEPTH_MAX) * 0.5
+    else:
+        z = min(max(center.z, z_min), z_max)
+    return Vec3(center.x, y, z)
+
+
+def lerp_config(a: float, b: float, t: float) -> float:
+    return a + (b - a) * clamp01(t)
