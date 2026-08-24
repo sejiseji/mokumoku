@@ -75,6 +75,8 @@ class NodePayload:
     shape_level: int = 0
     growth_level: int = 0
     response_kind: TouchResponseKind | None = None
+    surface_exposure: float = 1.0
+    exposure_mask: int = 0
 
 
 @dataclass(frozen=True)
@@ -513,6 +515,7 @@ def collect_cloud_render_items(
                 response_kind = motion_runtime.response_kind(node.id, frame)
         if node.id not in surface_lobe_ids and response_kind is None and growth_level <= 0:
             continue
+        surface_metric = surface_metrics.get(node.id, SurfaceMetrics(1.0, 0, 0))
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
         mesh_phase = single_node_mesh_phase(node, frame)
         family_scores = cloud_sprite_family_scores(
@@ -555,6 +558,8 @@ def collect_cloud_render_items(
                     morph_variant,
                     growth_level,
                     response_kind,
+                    surface_metric.exposure,
+                    surface_metric.exposure_mask,
                 ),
             )
         )

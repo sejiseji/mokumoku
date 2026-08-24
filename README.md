@@ -2,7 +2,7 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A13 Cloud Surface Cohesion です。A0〜A12 基盤に加えて、内部ノードを描画下地へ吸収し、画面上へ見せる雲房を表面Lobe中心に間引くことで、Seed Ecologyで増えたノードが粒々のまま露出しにくい描画へ移行しています。
+現在の実装範囲は Prototype A14 Cloud Material & Lighting 初回パスです。A0〜A13 基盤に加えて、表面Lobeへ露出方向マスクを持たせ、雲全体の下地はBodyとしてつなぎつつ、外周だけにハイライト・雲底影・入力時の面Morphを載せる描画へ移行しています。
 
 Quiet Motion Pass では、Ambient時のノード中心移動とサイズpulseを止め、外縁ノードだけを疎にsprite variant morphさせます。タップ、長押し、ドラッグ開始、フリックの反応は一回性のGrowthPulseとして扱い、グラフ距離2まで遅延伝播します。
 
@@ -33,6 +33,8 @@ Growth Shape Polish では、親ノードの周囲12方向を見て外縁度を�
 Seed Ecology Phase 2 では、Primed Seedが近くに複数ある場合に弱いSeedを後押しするクオラム信号を追加しています。一方で中距離の密な雲房は発芽閾値と候補スコアを押し下げるため、全部が一斉に膨らむのではなく、空いた場所で遅れてBloomしやすくなります。
 
 Cloud Surface Cohesion では、CloudNodeをそのまま全て可視スプライト化せず、同じlineage内の投影近傍から露出率を計算します。密な内部ノードは輪郭付きLobeを抑え、Body PassとGap Fillで白い雲塊の下地へ吸収します。表面候補は露出率、見かけ半径、上昇流、安定度でスコア化し、近すぎる候補をNon-Maximum Suppressionで間引きます。小さなDormant Seedと反応中ノードは従来どおり見えるため、生成直後の粒感と成熟後の雲塊感を分けています。
+
+Cloud Material & Lighting では、背面Lobe全体を強く暗色化するのではなく、Bodyは共有色でつなぎ、Surface Lobeの露出方向へだけ上側の明部と下側の影を描きます。Growth Pulseや長押し反応も小粒を追加するのではなく、Lobe輪郭を一時的に押し出す面Morphとして表示します。
 
 ## Requirements
 

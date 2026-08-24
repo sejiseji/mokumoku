@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src import config
+from src.assets.sprite_map import CloudSpriteFamily
 from src.build_info import APP_BUILD_LABEL
 from src.camera.camera import CameraController
 from src.camera.projection import camera_depth
@@ -659,6 +660,7 @@ class MokumokuApp:
 
         if self.assets_loaded:
             self.draw_cloud_sprite(payload, x, y)
+            self.draw_cloud_surface_light(payload, x, y)
             if payload.mesh_intensity > 0.0:
                 self.draw_single_cloud_mesh(payload, x, y)
             self.draw_cloud_shape_overlay(payload, x, y)
@@ -671,6 +673,7 @@ class MokumokuApp:
                 radius,
                 color,
             )
+            self.draw_cloud_surface_light(payload, x, y)
             self.draw_cloud_shape_overlay(payload, x, y)
 
     def draw_cloud_sprite(self, payload: NodePayload, x: int, y: int) -> None:
@@ -678,7 +681,6 @@ class MokumokuApp:
         sprite = payload.sprite
         if payload.depth_layer is CloudDepthLayer.BACK:
             pyxel.pal(7, 6)
-            pyxel.pal(6, 5)
         pyxel.blt(
             x,
             y,
@@ -691,6 +693,42 @@ class MokumokuApp:
         )
         if payload.depth_layer is CloudDepthLayer.BACK:
             pyxel.pal()
+
+    def draw_cloud_surface_light(self, payload: NodePayload, x: int, y: int) -> None:
+        if payload.family in (CloudSpriteFamily.INTERNAL, CloudSpriteFamily.FADE):
+            return
+        if payload.surface_exposure < config.CLOUD_SURFACE_INTERNAL_EXPOSURE:
+            return
+
+        pyxel = self.pyxel
+        sprite = payload.sprite
+        cx = x + sprite.width // 2
+        cy = y + sprite.height // 2
+        radius = max(4, int(sprite.width * 0.43))
+        direction_count = max(4, config.CLOUD_SURFACE_DIRECTION_COUNT)
+        bright = 6 if payload.depth_layer is CloudDepthLayer.BACK else 7
+        middle = 5 if payload.depth_layer is CloudDepthLayer.BACK else 6
+        shadow = 5
+
+        highlight_budget = 4 if payload.depth_layer is CloudDepthLayer.FRONT else 2
+        shadow_budget = 3
+        for index in range(direction_count):
+            if payload.exposure_mask and not (payload.exposure_mask & (1 << index)):
+                continue
+            angle = math.tau * index / direction_count
+            dx = math.cos(angle)
+            dy = math.sin(angle)
+            px = int(round(cx + dx * radius))
+            py = int(round(cy + dy * radius * 0.86))
+            if dy < -0.28 and highlight_budget > 0:
+                pyxel.pset(px, py, bright)
+                if payload.surface_exposure > config.CLOUD_SURFACE_STRONG_EXPOSURE:
+                    pyxel.pset(px + 1, py, bright)
+                highlight_budget -= 1
+            elif dy > 0.38 and shadow_budget > 0:
+                color = shadow if payload.depth_layer is not CloudDepthLayer.BACK else middle
+                pyxel.pset(px, py, color)
+                shadow_budget -= 1
 
     def draw_cloud_shape_overlay(self, payload: NodePayload, x: int, y: int) -> None:
         if (
@@ -721,61 +759,70 @@ class MokumokuApp:
             puff(-2.0, -7.0, 0.8, bright)
             puff(2.5, 6.5, 0.7, middle)
 
+        self.draw_cloud_response_morph(
+            payload,
+            cx,
+            cy,
+            max(4, int(sprite.width * 0.42)),
+            bright,
+            middle,
+        )
+
+    def draw_cloud_response_morph(
+        self,
+        payload: NodePayload,
+        cx: int,
+        cy: int,
+        radius: int,
+        bright: int,
+        middle: int,
+    ) -> None:
         growth = payload.growth_level
+        if growth <= 0 and payload.response_kind is None:
+            return
+
+        pyxel = self.pyxel
         response_kind = payload.response_kind or TouchResponseKind.TAP
+        expansion = min(3, max(1, growth // 4))
+        response_radius = radius + expansion
         if response_kind is TouchResponseKind.DRAG_START:
-            if growth >= 2:
-                puff(-7.0, 0.0, 0.8, bright)
-                puff(7.0, 0.0, 0.8, bright)
+            pyxel.line(cx - response_radius, cy, cx + response_radius, cy, bright)
             if growth >= 5:
                 pyxel.line(
-                    cx + unit(-7.0),
-                    cy + unit(0.0),
-                    cx + unit(7.0),
-                    cy + unit(0.0),
-                    bright,
-                )
-        elif response_kind is TouchResponseKind.DRAG_HOLD:
-            if growth >= 1:
-                puff(-7.5, -1.0, 0.7, middle)
-                puff(7.5, 1.0, 0.7, middle)
-            if growth >= 4:
-                pyxel.line(
-                    cx + unit(-6.0),
-                    cy + unit(2.5),
-                    cx + unit(6.0),
-                    cy + unit(-2.5),
+                    cx - response_radius + 2,
+                    cy - 2,
+                    cx + response_radius - 2,
+                    cy - 2,
                     middle,
                 )
+        elif response_kind is TouchResponseKind.DRAG_HOLD:
+            pyxel.line(
+                cx - response_radius + 1,
+                cy + 2,
+                cx + response_radius - 1,
+                cy - 2,
+                middle,
+            )
         elif response_kind is TouchResponseKind.LONG_PRESS:
-            if growth >= 2:
-                puff(-4.5, 4.5, 0.9, middle)
-                puff(4.0, 5.0, 0.9, middle)
+            pyxel.circb(cx, cy + 1, response_radius, middle)
             if growth >= 8:
                 pyxel.line(
-                    cx + unit(-5.5),
-                    cy + unit(6.5),
-                    cx + unit(5.5),
-                    cy + unit(6.5),
+                    cx - response_radius // 2,
+                    cy + response_radius,
+                    cx + response_radius // 2,
+                    cy + response_radius,
                     5,
                 )
         elif response_kind is TouchResponseKind.RELEASE:
-            if growth >= 2:
-                puff(-3.0, -3.0, 0.6, bright)
-                puff(3.0, 3.0, 0.6, middle)
+            pyxel.circb(cx, cy, max(3, response_radius - 1), middle)
         else:
-            if growth >= 2:
-                puff(-5.5, -4.5, 0.7, bright)
-            if growth >= 5:
-                puff(5.0, -4.5, 0.8, bright)
-            if growth >= 8:
-                puff(0.5, 7.0, 0.7, middle)
-            if growth >= 9:
+            pyxel.circb(cx, cy, response_radius, middle)
+            if growth >= 6:
                 pyxel.line(
-                    cx + unit(-3.0),
-                    cy + unit(-7.0),
-                    cx + unit(3.0),
-                    cy + unit(-7.0),
+                    cx - response_radius // 3,
+                    cy - response_radius,
+                    cx + response_radius // 3,
+                    cy - response_radius,
                     bright,
                 )
 

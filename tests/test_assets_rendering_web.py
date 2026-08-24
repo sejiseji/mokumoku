@@ -755,6 +755,8 @@ class AssetsRenderingWebTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(body_payloads), 1)
         self.assertLess(len(node_payloads), len(simulation.state.live_nodes()))
+        self.assertTrue(all(0.0 <= payload.surface_exposure <= 1.0 for payload in node_payloads))
+        self.assertTrue(any(payload.exposure_mask > 0 for payload in node_payloads))
 
     def test_surface_metrics_use_unconnected_projected_neighbors(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
