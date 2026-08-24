@@ -7,7 +7,10 @@ from src.camera.camera import build_camera_basis
 from src.camera.projection import camera_depth, project_point
 from src.cloud.graph import add_edge, create_node, recompute_clusters
 from src.cloud.reaction import (
+    CloudStimulus,
     ReactionEventKind,
+    ReactionViewSnapshot,
+    StimulusKind,
     charge_level,
     new_seed_budget,
     radial_strength,
@@ -314,6 +317,44 @@ class RadialReactionTests(unittest.TestCase):
             )
         )
 
+    def test_secondary_sprout_prefers_parent_polarity_direction(self) -> None:
+        simulation = CloudSimulation(RandomSource(11223))
+        camera = build_camera_basis(0.0)
+        parent = create_isolated_parent(simulation)
+        parent.polarity = Vec3(-1.0, 0.0, 0.0)
+        parent.updraft = 0.0
+        parent.moisture = 0.42
+        parent.noise = 0.0
+        stimulus = directional_stimulus(simulation, camera, parent)
+
+        candidate = simulation.best_sprout_candidate(stimulus, parent, 1, 0)
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        position, _direction_index = candidate
+        growth_direction = (position - parent.position).normalized()
+        self.assertGreater(growth_direction.dot(parent.polarity), 0.55)
+
+    def test_secondary_sprout_child_inherits_parent_and_growth_polarity(self) -> None:
+        simulation = CloudSimulation(RandomSource(11224))
+        camera = build_camera_basis(0.0)
+        parent = create_isolated_parent(simulation)
+        parent.polarity = Vec3(-1.0, 0.0, 0.0)
+        parent.updraft = 0.0
+        parent.moisture = 0.42
+        parent.noise = 0.0
+        stimulus = directional_stimulus(simulation, camera, parent)
+
+        sprout = simulation.create_secondary_sprout(stimulus, parent.id, 1, 0)
+
+        self.assertIsNotNone(sprout)
+        assert sprout is not None
+        child_id, _edge_id, _direction_index = sprout
+        child = simulation.state.nodes[child_id]
+        growth_direction = (child.position - parent.position).normalized()
+        self.assertGreater(child.polarity.dot(parent.polarity), 0.60)
+        self.assertGreater(child.polarity.dot(growth_direction), 0.60)
+
     def test_radial_reaction_plan_is_deterministic(self) -> None:
         first = radial_signature()
         second = radial_signature()
@@ -347,6 +388,50 @@ def radial_signature() -> tuple:
                 round(project_point(simulation.state.nodes[node_id].position, camera).screen_y, 3),
             )
             for node_id in result.spawned_node_ids
+        ),
+    )
+
+
+def create_isolated_parent(simulation: CloudSimulation):
+    lineage = simulation.ensure_active_lineage()
+    cluster_id = simulation.state.next_cluster_id
+    simulation.state.next_cluster_id += 1
+    parent = create_node(
+        simulation.state,
+        lineage.id,
+        cluster_id,
+        Vec3(0.0, 150.0, 0.0),
+        simulation.rng,
+    )
+    recompute_clusters(simulation.state, lineage.id)
+    return parent
+
+
+def directional_stimulus(
+    simulation: CloudSimulation,
+    camera,
+    parent,
+) -> CloudStimulus:
+    projection = project_point(parent.position, camera)
+    return CloudStimulus(
+        reaction_id=77,
+        source_kind=StimulusKind.TAP,
+        primary_node_id=parent.id,
+        lineage_id=parent.lineage_id,
+        screen_x=projection.screen_x,
+        screen_y=projection.screen_y,
+        world_position=parent.position,
+        strength=1.0,
+        radius_px=int(config.MAX_REACTION_RADIUS_PX),
+        created_frame=0,
+        seed=24680,
+        view_snapshot=ReactionViewSnapshot(
+            camera_right=camera.right,
+            camera_up=camera.up,
+            camera_forward=camera.forward,
+            camera_position=camera.position,
+            pointer_screen_x=projection.screen_x,
+            pointer_screen_y=projection.screen_y,
         ),
     )
 

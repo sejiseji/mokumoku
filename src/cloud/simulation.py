@@ -731,6 +731,23 @@ class CloudSimulation:
                 camera,
                 plane_depth,
             )
+            if stack_t > 0.0 and primary_node_id is not None:
+                source = self.state.nodes.get(primary_node_id)
+                if source is not None:
+                    direction = safe_normalized(position - source.position, source.polarity)
+                    score += (
+                        config.RADIAL_STACK_POLARITY_SCORE_BONUS
+                        * stack_t
+                        * max(0.0, source.polarity.dot(direction))
+                    )
+                    outward = source.position - self.cluster_centroid(source)
+                    if outward.length() > 0.01:
+                        outward_direction = safe_normalized(outward, source.polarity)
+                        score += (
+                            config.RADIAL_STACK_OUTWARD_SCORE_BONUS
+                            * stack_t
+                            * max(0.0, outward_direction.dot(direction))
+                        )
             if stack_t > 0.0:
                 vertical_delta = (screen_y - candidate_y) / max(1.0, radius_px)
                 if vertical_delta > 0.0:
@@ -1116,6 +1133,8 @@ class CloudSimulation:
         node.noise = clamp01(0.18 + 0.22 * strength)
         node.untouched_time = 0.0
         if source is not None:
+            growth_direction = safe_normalized(node.position - source.position, source.polarity)
+            node.polarity = inherited_child_polarity(source, growth_direction)
             node.updraft = clamp01(source.updraft + 0.07 * (1.0 - radial_t))
             node.moisture = clamp01((node.moisture + source.moisture * 0.55) / 1.55)
             add_edge(
@@ -1822,6 +1841,8 @@ class CloudSimulation:
         child.moisture = clamp01((parent.moisture + 0.50) * 0.5)
         child.updraft = clamp01(parent.updraft + 0.08 * upward_bias(direction_index))
         child.noise = clamp01(parent.noise * 0.72 + 0.10)
+        growth_direction = safe_normalized(child.position - parent.position, parent.polarity)
+        child.polarity = inherited_child_polarity(parent, growth_direction)
         edge = add_edge(
             self.state,
             parent.lineage_id,
@@ -1849,6 +1870,18 @@ class CloudSimulation:
             parent.radius * 0.58 + config.MIN_NODE_RADIUS,
         )
         best: tuple[float, Vec3, int] | None = None
+        view_camera = CameraBasis(
+            right=snapshot.camera_right,
+            up=snapshot.camera_up,
+            forward=snapshot.camera_forward,
+            position=snapshot.camera_position,
+            yaw_degrees=0.0,
+            pitch_degrees=0.0,
+        )
+        parent_projection = project_point(parent.position, view_camera)
+        input_dx = stimulus.screen_x - parent_projection.screen_x
+        input_dy = stimulus.screen_y - parent_projection.screen_y
+        input_length = math.hypot(input_dx, input_dy)
         for direction_index in range(config.SPROUT_DIRECTION_COUNT):
             angle = math.tau * direction_index / config.SPROUT_DIRECTION_COUNT
             right_weight = math.cos(angle)
@@ -1871,17 +1904,8 @@ class CloudSimulation:
                 + snapshot.camera_forward * depth_jitter
             )
             position = clamp_cloud_position(raw_position)
-            projection = project_point(
-                position,
-                CameraBasis(
-                    right=snapshot.camera_right,
-                    up=snapshot.camera_up,
-                    forward=snapshot.camera_forward,
-                    position=snapshot.camera_position,
-                    yaw_degrees=0.0,
-                    pitch_degrees=0.0,
-                ),
-            )
+            candidate_direction = safe_normalized(position - parent.position, parent.polarity)
+            projection = project_point(position, view_camera)
             score = self.sprout_candidate_score(
                 parent,
                 position,
@@ -1889,8 +1913,22 @@ class CloudSimulation:
                 right_weight,
                 up_weight,
                 outward,
+                candidate_direction,
             )
             if projection.visible:
+                if input_length > 4.0 and parent_projection.visible:
+                    candidate_dx = projection.screen_x - parent_projection.screen_x
+                    candidate_dy = projection.screen_y - parent_projection.screen_y
+                    candidate_length = math.hypot(candidate_dx, candidate_dy)
+                    if candidate_length > 0.01:
+                        input_alignment = (
+                            (candidate_dx * input_dx + candidate_dy * input_dy)
+                            / (candidate_length * input_length)
+                        )
+                        score += (
+                            config.SPROUT_INPUT_DIRECTION_SCORE_WEIGHT
+                            * max(0.0, input_alignment)
+                        )
                 if projection.screen_y >= config.SKY_BOTTOM_Y - 6:
                     score -= 0.35
                 if projection.screen_x < -16 or projection.screen_x > config.SCREEN_WIDTH + 16:
@@ -1911,8 +1949,13 @@ class CloudSimulation:
         right_weight: float,
         up_weight: float,
         outward: Vec3,
+        candidate_direction: Vec3,
     ) -> float:
         score = 0.50
+        polarity_match = parent.polarity.dot(candidate_direction)
+        score += config.SPROUT_POLARITY_SCORE_WEIGHT * max(0.0, polarity_match)
+        if polarity_match < -0.15:
+            score += 0.12 * polarity_match
         if parent.updraft >= 0.35:
             score += max(0.0, up_weight) * (0.35 + parent.updraft * 0.30)
         if parent.moisture >= 0.48 and parent.updraft < 0.45:
@@ -1922,16 +1965,12 @@ class CloudSimulation:
         if parent.incubation >= 0.55:
             score += max(0.0, -up_weight) * 0.10
         if outward.length() > 0.01:
-            try:
-                outward_direction = outward.normalized()
-            except ValueError:
-                outward_direction = Vec3(0.0, 0.0, 0.0)
-            view_direction = (
-                Vec3(right_weight, up_weight, 0.0).normalized()
-                if abs(right_weight) + abs(up_weight) > 0.01
-                else Vec3(0.0, 0.0, 0.0)
+            outward_direction = safe_normalized(outward, candidate_direction)
+            score += (
+                max(0.0, outward_direction.dot(candidate_direction))
+                * config.SPROUT_OUTWARD_SCORE_WEIGHT
             )
-            score += max(0.0, outward_direction.x * view_direction.x) * 0.12
+        score += self.sprout_sector_score(parent, candidate_direction)
         nearest = self.nearest_node_distance(position, exclude_node_id=parent.id)
         if nearest is not None:
             if nearest < config.MIN_NODE_RADIUS * 0.75:
@@ -1941,6 +1980,29 @@ class CloudSimulation:
             elif nearest > 42.0:
                 score -= 0.08
         return score
+
+    def sprout_sector_score(
+        self,
+        parent: CloudNode,
+        candidate_direction: Vec3,
+    ) -> float:
+        occupied = 0.0
+        for other in self.state.live_nodes():
+            if other.id == parent.id or other.is_pruning:
+                continue
+            offset = other.position - parent.position
+            distance = offset.length()
+            if distance <= 0.01 or distance > config.SPROUT_OCCUPIED_SECTOR_RADIUS:
+                continue
+            direction = safe_normalized(offset, candidate_direction)
+            alignment = direction.dot(candidate_direction)
+            if alignment < config.SPROUT_OCCUPIED_SECTOR_ALIGNMENT:
+                continue
+            closeness = 1.0 - distance / config.SPROUT_OCCUPIED_SECTOR_RADIUS
+            occupied = max(occupied, alignment * closeness)
+        return config.SPROUT_FREE_SECTOR_BONUS - (
+            config.SPROUT_OCCUPIED_SECTOR_PENALTY * occupied
+        )
 
     def seed_resonance_candidates(
         self,
@@ -2284,6 +2346,25 @@ def upward_bias(direction_index: int) -> float:
 
 def seed_resonance_sensitivity(trait_seed: int) -> float:
     return 0.88 + stable_hash01(trait_seed, 0xEC01) * 0.24
+
+
+def safe_normalized(vector: Vec3, fallback: Vec3) -> Vec3:
+    try:
+        return vector.normalized()
+    except ValueError:
+        try:
+            return fallback.normalized()
+        except ValueError:
+            return Vec3(0.0, 1.0, 0.0)
+
+
+def inherited_child_polarity(parent: CloudNode, growth_direction: Vec3) -> Vec3:
+    return safe_normalized(
+        parent.polarity * config.SPROUT_POLARITY_PARENT_WEIGHT
+        + growth_direction * config.SPROUT_POLARITY_GROWTH_WEIGHT
+        + Vec3(0.0, 1.0, 0.0) * config.SPROUT_POLARITY_UP_WEIGHT,
+        parent.polarity,
+    )
 
 
 def radial_birth_basis(camera: CameraBasis) -> tuple[Vec3, Vec3, Vec3]:
