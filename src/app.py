@@ -63,6 +63,13 @@ class CameraButton:
     height: int
 
 
+@dataclass
+class CameraDialPointer:
+    start_x: float
+    start_y: float
+    moved: bool = False
+
+
 def camera_buttons() -> tuple[CameraButton, CameraButton]:
     y = config.CAMERA_BUTTON_Y
     width = config.CAMERA_BUTTON_WIDTH
@@ -89,6 +96,44 @@ def camera_button_direction_at(screen_x: float, screen_y: float) -> int | None:
         ):
             return button.direction
     return None
+
+
+def dial_x_to_yaw(pointer_x: float) -> float:
+    normalized = (pointer_x - config.CAMERA_DIAL_LEFT) / (
+        config.CAMERA_DIAL_RIGHT - config.CAMERA_DIAL_LEFT
+    )
+    normalized = max(0.0, min(1.0, normalized))
+    return config.CAMERA_MIN_YAW + (
+        config.CAMERA_MAX_YAW - config.CAMERA_MIN_YAW
+    ) * normalized
+
+
+def yaw_to_dial_x(yaw: float) -> float:
+    clamped_yaw = max(config.CAMERA_MIN_YAW, min(config.CAMERA_MAX_YAW, yaw))
+    normalized = (clamped_yaw - config.CAMERA_MIN_YAW) / (
+        config.CAMERA_MAX_YAW - config.CAMERA_MIN_YAW
+    )
+    return config.CAMERA_DIAL_LEFT + (
+        config.CAMERA_DIAL_RIGHT - config.CAMERA_DIAL_LEFT
+    ) * normalized
+
+
+def camera_dial_hit(screen_x: float, screen_y: float) -> bool:
+    return (
+        config.CAMERA_DIAL_LEFT - config.CAMERA_DIAL_TOUCH_PADDING_X
+        <= screen_x
+        <= config.CAMERA_DIAL_RIGHT + config.CAMERA_DIAL_TOUCH_PADDING_X
+        and config.CAMERA_DIAL_Y - config.CAMERA_DIAL_TOUCH_PADDING_Y
+        <= screen_y
+        <= config.CAMERA_DIAL_Y + config.CAMERA_DIAL_TOUCH_PADDING_Y
+    )
+
+
+def camera_dial_center_hit(screen_x: float, screen_y: float) -> bool:
+    center_x = (config.CAMERA_DIAL_LEFT + config.CAMERA_DIAL_RIGHT) / 2.0
+    return camera_dial_hit(screen_x, screen_y) and abs(screen_x - center_x) <= (
+        config.CAMERA_DIAL_TOUCH_PADDING_X + 2
+    )
 
 
 def should_draw_edge_payload(debug_enabled: bool) -> bool:
@@ -119,6 +164,7 @@ class MokumokuApp:
         self.motion_atlas_build_ms = (time.perf_counter() - atlas_start) * 1000.0
         self.motion_runtime = WeatherMotionRuntime()
         self.pointer: ActivePointer | None = None
+        self.camera_dial_pointer: CameraDialPointer | None = None
         self.reaction_waves: list[CloudReactionWave] = []
         self.previous_selected_id: int | None = None
         self.debug_enabled = False
@@ -151,6 +197,7 @@ class MokumokuApp:
         if pyxel.btnp(pyxel.KEY_E):
             self.request_camera_relative(1)
         if pyxel.btnp(pyxel.KEY_C):
+            self.camera_dial_pointer = None
             self.camera.cycle()
             self.cancel_pointer()
         if pyxel.btnp(pyxel.KEY_D):
@@ -159,7 +206,7 @@ class MokumokuApp:
         if key_f4 is not None and pyxel.btnp(key_f4):
             self.cloud.advance_time(8.0)
 
-        consumed_pointer = self.update_camera_buttons()
+        consumed_pointer = self.update_camera_controls()
         self.camera.update(1.0 / config.FPS)
         if not consumed_pointer:
             self.update_pointer()
@@ -170,8 +217,59 @@ class MokumokuApp:
             pyxel.quit()
 
     def request_camera_relative(self, direction: int) -> None:
+        self.camera_dial_pointer = None
         self.camera.request_relative(direction)
         self.cancel_pointer()
+
+    def update_camera_controls(self) -> bool:
+        if self.update_camera_dial():
+            return True
+        return self.update_camera_buttons()
+
+    def update_camera_dial(self) -> bool:
+        pyxel = self.pyxel
+        mouse_button_left = getattr(pyxel, "MOUSE_BUTTON_LEFT", 0)
+        pressed = pyxel.btn(mouse_button_left)
+        just_pressed = pyxel.btnp(mouse_button_left)
+        just_released = pyxel.btnr(mouse_button_left)
+        x = float(pyxel.mouse_x)
+        y = float(pyxel.mouse_y)
+
+        dial_pointer = self.camera_dial_pointer
+        if dial_pointer is not None:
+            if just_released or not pressed:
+                yaw = dial_x_to_yaw(x)
+                if dial_pointer.moved:
+                    self.camera.update_dial_drag(yaw)
+                    self.camera.end_dial_drag()
+                else:
+                    if camera_dial_center_hit(dial_pointer.start_x, dial_pointer.start_y):
+                        yaw = config.CAMERA_FRONT_YAW
+                    else:
+                        yaw = dial_x_to_yaw(dial_pointer.start_x)
+                    self.camera.request_yaw(
+                        yaw,
+                        transition_seconds=config.CAMERA_DIAL_TRACK_TAP_SECONDS,
+                    )
+                self.camera_dial_pointer = None
+                return True
+
+            if pressed:
+                if (
+                    math.hypot(x - dial_pointer.start_x, y - dial_pointer.start_y)
+                    >= config.PRESS_SLOP_PX
+                ):
+                    dial_pointer.moved = True
+                self.camera.update_dial_drag(dial_x_to_yaw(x))
+                return True
+
+        if just_pressed and camera_dial_hit(x, y):
+            self.cancel_pointer()
+            self.camera_dial_pointer = CameraDialPointer(start_x=x, start_y=y)
+            self.camera.begin_dial_drag(dial_x_to_yaw(x))
+            return True
+
+        return False
 
     def update_camera_buttons(self) -> bool:
         pyxel = self.pyxel
@@ -394,6 +492,7 @@ class MokumokuApp:
         self.draw_cloud()
         self.draw_radial_reaction_feedback()
         self.draw_camera_buttons()
+        self.draw_camera_dial()
         pyxel.text(8, 8, "MOKUMOKU Prototype A8", config.COLOR_UI)
         pyxel.text(
             8,
@@ -410,7 +509,7 @@ class MokumokuApp:
         )
         if self.debug_enabled:
             self.draw_debug()
-        pyxel.text(8, config.SCREEN_HEIGHT - 14, "</> cam  D debug  F4 age", config.COLOR_UI)
+        pyxel.text(8, config.SCREEN_HEIGHT - 14, "dial cam  D debug  F4 age", config.COLOR_UI)
         pyxel.text(
             config.SCREEN_WIDTH - 8 - len(APP_BUILD_LABEL) * 4,
             config.SCREEN_HEIGHT - 14,
@@ -678,6 +777,31 @@ class MokumokuApp:
                 text_color,
             )
 
+    def draw_camera_dial(self) -> None:
+        pyxel = self.pyxel
+        left = config.CAMERA_DIAL_LEFT
+        right = config.CAMERA_DIAL_RIGHT
+        y = config.CAMERA_DIAL_Y
+        center = (left + right) // 2
+        knob_x = int(round(yaw_to_dial_x(self.camera.current_yaw)))
+        track_color = 5
+        tick_color = config.COLOR_UI
+        knob_color = 7 if self.camera.is_dial_active() else config.COLOR_UI
+
+        pyxel.line(left, y, right, y, track_color)
+        pyxel.line(left + 8, y - 3, right - 8, y - 3, track_color)
+        for tick_x in (left, center, right):
+            pyxel.line(tick_x, y - 4, tick_x, y + 4, tick_color)
+
+        half_w = config.CAMERA_DIAL_KNOB_WIDTH // 2
+        half_h = config.CAMERA_DIAL_KNOB_HEIGHT // 2
+        pyxel.tri(knob_x, y - half_h, knob_x - half_w, y, knob_x + half_w, y, knob_color)
+        pyxel.tri(knob_x, y + half_h, knob_x - half_w, y, knob_x + half_w, y, knob_color)
+
+        pyxel.text(left - 3, y - 13, "L", tick_color)
+        pyxel.text(center - 2, y - 13, "0", tick_color)
+        pyxel.text(right - 2, y - 13, "R", tick_color)
+
     def draw_debug(self) -> None:
         pyxel = self.pyxel
         lineage = self.cloud.state.active_lineage()
@@ -730,6 +854,12 @@ class MokumokuApp:
             8,
             120,
             f"responses {self.motion_runtime.growth_pulse_count(self.state.frame)}",
+            config.COLOR_UI,
+        )
+        pyxel.text(
+            8,
+            130,
+            f"camera yaw {self.camera.current_yaw:.2f}",
             config.COLOR_UI,
         )
 

@@ -14,6 +14,13 @@ class CameraPreset(Enum):
     RIGHT = auto()
 
 
+class CameraControlMode(Enum):
+    IDLE = auto()
+    PRESET_TRANSITION = auto()
+    DIAL_DRAG = auto()
+    DIAL_SETTLE = auto()
+
+
 PRESET_YAWS = {
     CameraPreset.LEFT: config.CAMERA_LEFT_YAW,
     CameraPreset.FRONT: config.CAMERA_FRONT_YAW,
@@ -73,45 +80,138 @@ class CameraController:
     start_yaw: float = config.CAMERA_FRONT_YAW
     transition_elapsed: float = 0.0
     transition_seconds: float = config.CAMERA_TRANSITION_SECONDS
+    mode: CameraControlMode = CameraControlMode.IDLE
 
     def basis(self) -> CameraBasis:
         return build_camera_basis(self.current_yaw)
 
     def is_transitioning(self) -> bool:
-        return (
-            self.transition_elapsed < self.transition_seconds
-            and self.current_yaw != self.target_yaw
-        )
+        return self.mode is not CameraControlMode.IDLE
+
+    def is_dial_active(self) -> bool:
+        return self.mode is CameraControlMode.DIAL_DRAG
 
     def can_accept_cloud_input(self) -> bool:
-        return not self.is_transitioning()
+        return self.mode is CameraControlMode.IDLE
+
+    def begin_dial_drag(self, yaw: float) -> None:
+        self.mode = CameraControlMode.DIAL_DRAG
+        self.target_yaw = self._clamp_yaw(yaw)
+        self.start_yaw = self.current_yaw
+        self.transition_elapsed = 0.0
+
+    def update_dial_drag(self, yaw: float) -> None:
+        if self.mode is CameraControlMode.DIAL_DRAG:
+            self.target_yaw = self._clamp_yaw(yaw)
+
+    def end_dial_drag(self) -> None:
+        if self.mode is not CameraControlMode.DIAL_DRAG:
+            return
+        if abs(self.current_yaw - self.target_yaw) <= config.CAMERA_YAW_SETTLE_EPSILON:
+            self.current_yaw = self.target_yaw
+            self._sync_preset_to_nearest_yaw()
+            self.mode = CameraControlMode.IDLE
+            return
+        self.mode = CameraControlMode.DIAL_SETTLE
+
+    def request_yaw(
+        self,
+        yaw: float,
+        *,
+        transition_seconds: float | None = None,
+    ) -> bool:
+        target_yaw = self._clamp_yaw(yaw)
+        if (
+            self.mode is CameraControlMode.IDLE
+            and abs(self.current_yaw - target_yaw) <= config.CAMERA_YAW_SETTLE_EPSILON
+        ):
+            self.current_yaw = target_yaw
+            self.target_yaw = target_yaw
+            self._sync_preset_to_nearest_yaw()
+            return False
+        self.start_yaw = self.current_yaw
+        self.target_yaw = target_yaw
+        self.transition_elapsed = 0.0
+        self.transition_seconds = (
+            config.CAMERA_TRANSITION_SECONDS
+            if transition_seconds is None
+            else max(1.0 / config.FPS, transition_seconds)
+        )
+        self.mode = CameraControlMode.PRESET_TRANSITION
+        return True
 
     def request_preset(self, preset: CameraPreset) -> bool:
-        if preset == self.preset and not self.is_transitioning():
-            return False
         self.preset = preset
-        self.start_yaw = self.current_yaw
-        self.target_yaw = PRESET_YAWS[preset]
-        self.transition_elapsed = 0.0
-        return True
+        return self.request_yaw(PRESET_YAWS[preset])
+
+    def request_left(self) -> bool:
+        return self.request_preset(CameraPreset.LEFT)
+
+    def request_front(self) -> bool:
+        return self.request_preset(CameraPreset.FRONT)
+
+    def request_right(self) -> bool:
+        return self.request_preset(CameraPreset.RIGHT)
 
     def request_relative(self, direction: int) -> bool:
         presets = [CameraPreset.LEFT, CameraPreset.FRONT, CameraPreset.RIGHT]
-        index = presets.index(self.preset)
-        next_index = max(0, min(len(presets) - 1, index + direction))
-        return self.request_preset(presets[next_index])
+        yaw = self.target_yaw if self.mode is not CameraControlMode.IDLE else self.current_yaw
+        epsilon = 0.5
+        if direction < 0:
+            candidates = [
+                preset for preset in presets if PRESET_YAWS[preset] < yaw - epsilon
+            ]
+            return self.request_preset(candidates[-1] if candidates else presets[0])
+        if direction > 0:
+            candidates = [
+                preset for preset in presets if PRESET_YAWS[preset] > yaw + epsilon
+            ]
+            return self.request_preset(candidates[0] if candidates else presets[-1])
+        return False
 
     def cycle(self) -> bool:
         presets = [CameraPreset.LEFT, CameraPreset.FRONT, CameraPreset.RIGHT]
-        return self.request_preset(presets[(presets.index(self.preset) + 1) % len(presets)])
+        current = self._nearest_preset()
+        return self.request_preset(presets[(presets.index(current) + 1) % len(presets)])
 
     def update(self, dt: float) -> None:
-        if self.current_yaw == self.target_yaw:
-            self.transition_elapsed = self.transition_seconds
+        if self.mode is CameraControlMode.IDLE:
             return
-        self.transition_elapsed += dt
-        t = smoothstep(self.transition_elapsed / self.transition_seconds)
-        self.current_yaw = self.start_yaw + (self.target_yaw - self.start_yaw) * t
-        if self.transition_elapsed >= self.transition_seconds:
-            self.current_yaw = self.target_yaw
-            self.transition_elapsed = self.transition_seconds
+
+        if self.mode is CameraControlMode.DIAL_DRAG:
+            follow = 1.0 - math.exp(-config.CAMERA_DIAL_FOLLOW_RATE * dt)
+            self.current_yaw += (self.target_yaw - self.current_yaw) * follow
+            self.current_yaw = self._clamp_yaw(self.current_yaw)
+            return
+
+        if self.mode is CameraControlMode.DIAL_SETTLE:
+            follow = 1.0 - math.exp(-config.CAMERA_DIAL_SETTLE_RATE * dt)
+            self.current_yaw += (self.target_yaw - self.current_yaw) * follow
+            self.current_yaw = self._clamp_yaw(self.current_yaw)
+            if abs(self.current_yaw - self.target_yaw) <= config.CAMERA_YAW_SETTLE_EPSILON:
+                self.current_yaw = self.target_yaw
+                self._sync_preset_to_nearest_yaw()
+                self.mode = CameraControlMode.IDLE
+            return
+
+        if self.mode is CameraControlMode.PRESET_TRANSITION:
+            self.transition_elapsed += dt
+            t = smoothstep(self.transition_elapsed / self.transition_seconds)
+            self.current_yaw = self.start_yaw + (self.target_yaw - self.start_yaw) * t
+            self.current_yaw = self._clamp_yaw(self.current_yaw)
+            if self.transition_elapsed >= self.transition_seconds:
+                self.current_yaw = self.target_yaw
+                self.transition_elapsed = self.transition_seconds
+                self._sync_preset_to_nearest_yaw()
+                self.mode = CameraControlMode.IDLE
+
+    @staticmethod
+    def _clamp_yaw(yaw: float) -> float:
+        return max(config.CAMERA_MIN_YAW, min(config.CAMERA_MAX_YAW, yaw))
+
+    def _nearest_preset(self) -> CameraPreset:
+        yaw = self.target_yaw if self.mode is not CameraControlMode.IDLE else self.current_yaw
+        return min(CameraPreset, key=lambda preset: abs(PRESET_YAWS[preset] - yaw))
+
+    def _sync_preset_to_nearest_yaw(self) -> None:
+        self.preset = self._nearest_preset()

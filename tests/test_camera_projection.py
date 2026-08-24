@@ -3,7 +3,12 @@ from __future__ import annotations
 import unittest
 
 from src import config
-from src.camera.camera import CameraController, CameraPreset, build_camera_basis
+from src.camera.camera import (
+    CameraController,
+    CameraControlMode,
+    CameraPreset,
+    build_camera_basis,
+)
 from src.camera.interaction_plane import (
     depth_locked_drag_target,
     screen_to_world_at_depth,
@@ -106,6 +111,42 @@ class CameraProjectionTests(unittest.TestCase):
 
         self.assertTrue(controller.can_accept_cloud_input())
         self.assertEqual(controller.current_yaw, config.CAMERA_RIGHT_YAW)
+
+    def test_camera_request_yaw_clamps_to_continuous_limits(self) -> None:
+        controller = CameraController()
+
+        controller.request_yaw(config.CAMERA_MAX_YAW + 50.0)
+        controller.update(config.CAMERA_TRANSITION_SECONDS)
+
+        self.assertEqual(controller.current_yaw, config.CAMERA_MAX_YAW)
+        self.assertEqual(controller.mode, CameraControlMode.IDLE)
+
+    def test_camera_dial_drag_locks_cloud_input_and_settles(self) -> None:
+        controller = CameraController()
+
+        controller.begin_dial_drag(18.0)
+        self.assertEqual(controller.mode, CameraControlMode.DIAL_DRAG)
+        self.assertFalse(controller.can_accept_cloud_input())
+
+        controller.update(1.0 / config.FPS)
+        self.assertGreater(controller.current_yaw, 0.0)
+        controller.update_dial_drag(24.0)
+        controller.end_dial_drag()
+
+        for _ in range(30):
+            controller.update(1.0 / config.FPS)
+
+        self.assertTrue(controller.can_accept_cloud_input())
+        self.assertAlmostEqual(controller.current_yaw, 24.0, delta=0.05)
+
+    def test_camera_relative_request_uses_current_continuous_yaw(self) -> None:
+        controller = CameraController(current_yaw=18.0, target_yaw=18.0)
+
+        changed = controller.request_relative(-1)
+        controller.update(config.CAMERA_TRANSITION_SECONDS)
+
+        self.assertTrue(changed)
+        self.assertEqual(controller.current_yaw, config.CAMERA_FRONT_YAW)
 
 
 if __name__ == "__main__":
