@@ -2,7 +2,7 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A10 Directional Cloud Growth Pass です。A0〜A9 基盤に加えて、Seedごとの成長方向を発芽候補の選択と子Seedの継承へ反映し、同じ刺激でも雲房ごとの向きに沿って育ちやすくしています。
+現在の実装範囲は Prototype A12 Seed Ecology Phase 2 です。A0〜A11 基盤に加えて、Seed同士のクオラム、近距離活性、中距離抑制を発芽判定と発芽候補の両方へ反映し、雲房が空いている外縁へ選択的に育ちやすくしています。
 
 Quiet Motion Pass では、Ambient時のノード中心移動とサイズpulseを止め、外縁ノードだけを疎にsprite variant morphさせます。タップ、長押し、ドラッグ開始、フリックの反応は一回性のGrowthPulseとして扱い、グラフ距離2まで遅延伝播します。
 
@@ -27,6 +27,10 @@ Stacked Birth Volume では、既存雲の上端や上昇流の強いノード�
 Upper Cloud Attachment では、積み上げ反応で生まれた中心〜中間Seedの一部を刺激元ノードへ接続し、独立した点ではなく既存雲の上に乗った雲房として育つようにしています。外縁Seedは次の共鳴・発芽の余地として残します。
 
 Directional Cloud Growth では、親Seedの `polarity`、クラスタ外向き、上昇流、周囲12方向の空き具合を使ってSecondary Sproutの候補を評価します。子Seedは親の方向性と実際の成長方向を混ぜて `polarity` を継承するため、雲房ごとに縦へ伸びる、横へ広がる、外へ逃げるといった差が残ります。
+
+Growth Shape Polish では、親ノードの周囲12方向を見て外縁度を算出します。内部に埋まったノードは発芽数と候補スコアが下がり、空いている外縁やクラスタ外向きの方向ほど子Seedを出しやすくなります。
+
+Seed Ecology Phase 2 では、Primed Seedが近くに複数ある場合に弱いSeedを後押しするクオラム信号を追加しています。一方で中距離の密な雲房は発芽閾値と候補スコアを押し下げるため、全部が一斉に膨らむのではなく、空いた場所で遅れてBloomしやすくなります。
 
 ## Requirements
 

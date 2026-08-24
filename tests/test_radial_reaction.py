@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import unittest
 
 from src import config
@@ -354,6 +355,42 @@ class RadialReactionTests(unittest.TestCase):
         growth_direction = (child.position - parent.position).normalized()
         self.assertGreater(child.polarity.dot(parent.polarity), 0.60)
         self.assertGreater(child.polarity.dot(growth_direction), 0.60)
+
+    def test_surrounded_node_has_lower_sprout_exposure_than_edge_node(self) -> None:
+        simulation = CloudSimulation(RandomSource(11225))
+        parent = create_isolated_parent(simulation)
+        exposed = simulation.sprout_exposure_factor(parent)
+
+        for index in range(config.SPROUT_DIRECTION_COUNT):
+            angle = index * math.tau / config.SPROUT_DIRECTION_COUNT
+            create_node(
+                simulation.state,
+                parent.lineage_id,
+                parent.cluster_id,
+                parent.position + Vec3(math.cos(angle) * 13.0, math.sin(angle) * 11.0, 0.0),
+                simulation.rng,
+            )
+
+        surrounded = simulation.sprout_exposure_factor(parent)
+
+        self.assertGreater(exposed, 0.80)
+        self.assertLess(surrounded, exposed - 0.45)
+
+    def test_occupied_sprout_sector_scores_lower_than_free_sector(self) -> None:
+        simulation = CloudSimulation(RandomSource(11226))
+        parent = create_isolated_parent(simulation)
+        create_node(
+            simulation.state,
+            parent.lineage_id,
+            parent.cluster_id,
+            parent.position + Vec3(12.0, 0.0, 0.0),
+            simulation.rng,
+        )
+
+        occupied = simulation.sprout_sector_score(parent, Vec3(1.0, 0.0, 0.0))
+        free = simulation.sprout_sector_score(parent, Vec3(-1.0, 0.0, 0.0))
+
+        self.assertLess(occupied, free)
 
     def test_radial_reaction_plan_is_deterministic(self) -> None:
         first = radial_signature()

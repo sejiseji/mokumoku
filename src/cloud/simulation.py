@@ -1681,7 +1681,7 @@ class CloudSimulation:
             + 0.08 * node.incubation
             - 0.18 * node.moisture
             - 0.10 * node.activation
-            - 0.10 * activation_signal
+            - (0.10 + config.SEED_QUORUM_THRESHOLD_BONUS) * activation_signal
         )
         return max(0.34, min(1.08, threshold))
 
@@ -1691,16 +1691,36 @@ class CloudSimulation:
         frame: int,
     ) -> tuple[float, float]:
         node = self.state.nodes[node_id]
+        return self.seed_ecology_position_signals(node.position, node_id, frame)
+
+    def seed_ecology_position_signals(
+        self,
+        position: Vec3,
+        exclude_node_id: int,
+        frame: int,
+    ) -> tuple[float, float]:
         activation = 0.0
         inhibition = 0.0
         for other in self.state.live_nodes():
-            if other.id == node_id or other.is_pruning:
+            if other.id == exclude_node_id or other.is_pruning:
                 continue
-            distance = node.position.distance_to(other.position)
+            distance = position.distance_to(other.position)
             if distance <= config.SEED_NEAR_ACTIVATION_RADIUS:
                 recent_bloom = 1.0 if other.refractory_until_frame > frame else 0.0
                 activity = max(other.excitation, recent_bloom, other.activation * 0.35)
                 activation += config.SEED_NEAR_ACTIVATION_GAIN * activity
+            elif distance <= config.SEED_QUORUM_RADIUS and other.excitation >= (
+                config.SEED_PRIMED_THRESHOLD
+            ):
+                primed = min(1.0, other.excitation / max(0.01, config.SEED_PRIMED_THRESHOLD))
+                falloff = 1.0 - (
+                    (distance - config.SEED_NEAR_ACTIVATION_RADIUS)
+                    / max(
+                        1.0,
+                        config.SEED_QUORUM_RADIUS - config.SEED_NEAR_ACTIVATION_RADIUS,
+                    )
+                ) * 0.55
+                activation += config.SEED_QUORUM_GAIN * primed * clamp01(falloff)
             elif (
                 config.SEED_MID_INHIBITION_INNER_RADIUS
                 < distance
@@ -1779,6 +1799,9 @@ class CloudSimulation:
         if node_degree(self.state, source_id) >= config.MAX_NODE_DEGREE:
             return 0
         density = self.local_density_factor(node.position, source_id)
+        exposure = self.sprout_exposure_factor(node)
+        if not guaranteed and exposure < config.SPROUT_MIN_EXPOSURE_FOR_UNGUARANTEED:
+            return 0
         score = clamp01(
             0.16
             + 0.34 * energy
@@ -1786,7 +1809,9 @@ class CloudSimulation:
             + 0.18 * node.updraft
             + 0.12 * node.activation
             + 0.08 * node.noise
+            + 0.14 * exposure
             - 0.22 * density
+            - 0.18 * (1.0 - exposure) * density
             - 0.12 * node.incubation
         )
         if guaranteed and score >= 0.18:
@@ -1964,12 +1989,28 @@ class CloudSimulation:
             score += stable_hash01(parent.id, direction_index, 0x1A2B) * 0.30
         if parent.incubation >= 0.55:
             score += max(0.0, -up_weight) * 0.10
+        exposure = self.sprout_exposure_factor(parent)
+        score += config.SPROUT_EXPOSURE_SCORE_WEIGHT * exposure
         if outward.length() > 0.01:
             outward_direction = safe_normalized(outward, candidate_direction)
+            outward_match = max(0.0, outward_direction.dot(candidate_direction))
             score += (
-                max(0.0, outward_direction.dot(candidate_direction))
-                * config.SPROUT_OUTWARD_SCORE_WEIGHT
+                outward_match * config.SPROUT_OUTWARD_SCORE_WEIGHT
             )
+            score -= (
+                config.SPROUT_INTERNAL_SCORE_PENALTY
+                * (1.0 - exposure)
+                * (1.0 - outward_match)
+            )
+        else:
+            score -= config.SPROUT_INTERNAL_SCORE_PENALTY * (1.0 - exposure) * 0.50
+        activation_signal, inhibition_signal = self.seed_ecology_position_signals(
+            position,
+            parent.id,
+            int(round(self.elapsed_time * config.FPS)),
+        )
+        score += config.SPROUT_NEAR_ACTIVATION_SCORE_WEIGHT * activation_signal
+        score -= config.SPROUT_MID_INHIBITION_SCORE_WEIGHT * inhibition_signal
         score += self.sprout_sector_score(parent, candidate_direction)
         nearest = self.nearest_node_distance(position, exclude_node_id=parent.id)
         if nearest is not None:
@@ -1981,7 +2022,27 @@ class CloudSimulation:
                 score -= 0.08
         return score
 
+    def sprout_exposure_factor(self, parent: CloudNode) -> float:
+        free_count = 0
+        for direction_index in range(config.SPROUT_DIRECTION_COUNT):
+            direction = canonical_sprout_direction(direction_index)
+            if self.sprout_sector_occupancy(parent, direction) <= 0.05:
+                free_count += 1
+        sector_factor = free_count / max(1, config.SPROUT_DIRECTION_COUNT)
+        degree_factor = 1.0 - clamp01(node_degree(self.state, parent.id) / config.MAX_NODE_DEGREE)
+        return clamp01(sector_factor * 0.78 + degree_factor * 0.22)
+
     def sprout_sector_score(
+        self,
+        parent: CloudNode,
+        candidate_direction: Vec3,
+    ) -> float:
+        occupied = self.sprout_sector_occupancy(parent, candidate_direction)
+        return config.SPROUT_FREE_SECTOR_BONUS - (
+            config.SPROUT_OCCUPIED_SECTOR_PENALTY * occupied
+        )
+
+    def sprout_sector_occupancy(
         self,
         parent: CloudNode,
         candidate_direction: Vec3,
@@ -2000,9 +2061,7 @@ class CloudSimulation:
                 continue
             closeness = 1.0 - distance / config.SPROUT_OCCUPIED_SECTOR_RADIUS
             occupied = max(occupied, alignment * closeness)
-        return config.SPROUT_FREE_SECTOR_BONUS - (
-            config.SPROUT_OCCUPIED_SECTOR_PENALTY * occupied
-        )
+        return occupied
 
     def seed_resonance_candidates(
         self,
@@ -2364,6 +2423,14 @@ def inherited_child_polarity(parent: CloudNode, growth_direction: Vec3) -> Vec3:
         + growth_direction * config.SPROUT_POLARITY_GROWTH_WEIGHT
         + Vec3(0.0, 1.0, 0.0) * config.SPROUT_POLARITY_UP_WEIGHT,
         parent.polarity,
+    )
+
+
+def canonical_sprout_direction(direction_index: int) -> Vec3:
+    angle = math.tau * direction_index / max(1, config.SPROUT_DIRECTION_COUNT)
+    return safe_normalized(
+        Vec3(math.cos(angle), math.sin(angle) * 0.86, 0.0),
+        Vec3(0.0, 1.0, 0.0),
     )
 
 

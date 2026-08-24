@@ -5,8 +5,10 @@ import unittest
 from src import config
 from src.camera.camera import build_camera_basis
 from src.camera.projection import project_point
+from src.cloud.graph import create_node, recompute_clusters
 from src.cloud.reaction import ReactionEventKind
 from src.cloud.simulation import CloudSimulation
+from src.math3d import Vec3
 from src.rng import RandomSource
 
 
@@ -183,6 +185,52 @@ class CloudReactionTests(unittest.TestCase):
 
         self.assertGreater(primed_excitation, seed_node.excitation)
 
+    def test_primed_seed_quorum_can_trigger_delayed_bloom(self) -> None:
+        isolated = CloudSimulation(RandomSource(24680))
+        isolated_target = create_ecology_seed(isolated, Vec3(0.0, 150.0, 0.0))
+        isolated_target.excitation = config.SEED_PRIMED_THRESHOLD
+
+        isolated_result = isolated.apply_seed_ecology_energy(
+            isolated_target.id,
+            0.16,
+            24,
+            1,
+            is_seed=True,
+        )
+
+        simulation = CloudSimulation(RandomSource(24680))
+        target = create_ecology_seed(simulation, Vec3(0.0, 150.0, 0.0))
+        first_neighbor = create_ecology_seed(simulation, Vec3(22.0, 150.0, 0.0))
+        second_neighbor = create_ecology_seed(simulation, Vec3(-24.0, 150.0, 0.0))
+        target.excitation = config.SEED_PRIMED_THRESHOLD
+        first_neighbor.excitation = config.SEED_PRIMED_THRESHOLD * 1.25
+        second_neighbor.excitation = config.SEED_PRIMED_THRESHOLD * 1.25
+
+        quorum_result = simulation.apply_seed_ecology_energy(
+            target.id,
+            0.16,
+            24,
+            1,
+            is_seed=True,
+        )
+
+        self.assertFalse(isolated_result.bloomed)
+        self.assertTrue(quorum_result.bloomed)
+        self.assertGreater(target.refractory_until_frame, 24)
+
+    def test_mid_range_seed_inhibition_raises_bloom_threshold(self) -> None:
+        simulation = CloudSimulation(RandomSource(24681))
+        target = create_ecology_seed(simulation, Vec3(0.0, 150.0, 0.0))
+        baseline = simulation.seed_bloom_threshold(target, 0.0, 0.0)
+        blocker = create_ecology_seed(simulation, Vec3(28.0, 150.0, 0.0))
+        blocker.mass = config.RETENTION_GROWN_MASS * 1.4
+
+        _activation, inhibition = simulation.local_seed_ecology_signals(target.id, 24)
+        inhibited = simulation.seed_bloom_threshold(target, 0.0, inhibition)
+
+        self.assertGreater(inhibition, 0.0)
+        self.assertGreater(inhibited, baseline)
+
     def test_reaction_budgets_cap_chain_size(self) -> None:
         simulation, camera, root_id = self.make_seed()
         current = simulation.state.nodes[root_id]
@@ -248,6 +296,21 @@ def reaction_signature() -> tuple:
         result.resonant_node_ids,
         event_signature,
     )
+
+
+def create_ecology_seed(simulation: CloudSimulation, position: Vec3):
+    lineage = simulation.ensure_active_lineage()
+    cluster_id = simulation.state.next_cluster_id
+    simulation.state.next_cluster_id += 1
+    node = create_node(
+        simulation.state,
+        lineage.id,
+        cluster_id,
+        position,
+        simulation.rng,
+    )
+    recompute_clusters(simulation.state, lineage.id)
+    return node
 
 
 if __name__ == "__main__":
