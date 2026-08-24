@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 
 from src import config
+from src.assets.sprite_map import CloudSpriteFamily
 from src.cloud.model import CloudState
 
 
@@ -41,10 +42,51 @@ class GrowthPulse:
     response_kind: TouchResponseKind = TouchResponseKind.TAP
 
 
+@dataclass(slots=True)
+class SpriteRoleState:
+    family: CloudSpriteFamily
+    changed_frame: int
+
+
 @dataclass
 class WeatherMotionRuntime:
     growth_pulses: dict[int, GrowthPulse] = field(default_factory=dict)
     morph_schedulers: dict[int, ClusterMorphScheduler] = field(default_factory=dict)
+    sprite_role_states: dict[int, SpriteRoleState] = field(default_factory=dict)
+
+    def stabilize_sprite_family(
+        self,
+        node_id: int,
+        raw_family: CloudSpriteFamily,
+        family_scores: dict[CloudSpriteFamily, float],
+        frame: int,
+    ) -> CloudSpriteFamily:
+        state = self.sprite_role_states.get(node_id)
+        if state is None or raw_family is CloudSpriteFamily.FADE:
+            self.sprite_role_states[node_id] = SpriteRoleState(raw_family, frame)
+            return raw_family
+
+        if state.family is raw_family:
+            return raw_family
+
+        held_frames = frame - state.changed_frame
+        if held_frames < config.CLOUD_ROLE_MIN_HOLD_FRAMES:
+            return state.family
+
+        raw_score = family_scores.get(raw_family, 0.0)
+        current_score = family_scores.get(state.family, 0.0)
+        if raw_score < current_score + config.CLOUD_ROLE_SWITCH_MARGIN:
+            return state.family
+
+        self.sprite_role_states[node_id] = SpriteRoleState(raw_family, frame)
+        return raw_family
+
+    def prune_sprite_role_states(self, live_node_ids: set[int]) -> None:
+        stale_ids = [
+            node_id for node_id in self.sprite_role_states if node_id not in live_node_ids
+        ]
+        for node_id in stale_ids:
+            del self.sprite_role_states[node_id]
 
     def ambient_morph_variants(
         self,

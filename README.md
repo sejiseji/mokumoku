@@ -2,7 +2,7 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A8 Cloud Seed Ecology です。A0〜A7 基盤に加えて、雲ノードへ刺激蓄積、不応期、trait由来の反応差、近距離活性と中距離抑制を入れ、Waveが届いた瞬間に全員が発芽するのではなく、Seedが刺激を覚えて条件が揃った時だけ反応するようにしています。
+現在の実装範囲は Prototype A9 Cloud Volume Readability Pass です。A0〜A8 基盤に加えて、連続カメラ操作中の深度描画順とスプライト役割切替を安定化し、立体Birth Volumeの雲を中間角度から観察しやすくしています。
 
 Quiet Motion Pass では、Ambient時のノード中心移動とサイズpulseを止め、外縁ノードだけを疎にsprite variant morphさせます。タップ、長押し、ドラッグ開始、フリックの反応は一回性のGrowthPulseとして扱い、グラフ距離2まで遅延伝播します。
 
@@ -19,6 +19,8 @@ Cloud Reaction System では、短い押下は小さく集中した反応、長�
 Cloud Seed Ecology では、弱いWaveを受けたDormant Seedはすぐ発芽せず `excitation` を蓄積します。2回目以降のWave、近くの発芽、周辺の空き具合によって閾値を超えた場合だけBloomし、Bloom後は短い不応期へ入ります。不応期中も薄いPulseは返しますが、同じSeedが連打で即座に増殖し続けることはありません。
 
 Continuous Camera Dial では、地上下部の横型ダイヤルで yaw を -32°〜+32° の範囲で連続操作できます。ダイヤル操作中は雲入力を止め、生成済み雲のworld座標は変えずに投影と描画順だけを更新します。
+
+Cloud Volume Readability Pass では、近接depthをバケット化して描画順の細かな反転を抑え、投影上の `INTERNAL` / `EDGE` / `BOTTOM` / `UPDRAFT` などの役割が境界で即座にパタつかないよう、短い保持時間とスコア差によるヒステリシスを入れています。
 
 ## Requirements
 

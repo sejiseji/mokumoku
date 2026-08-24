@@ -21,11 +21,14 @@ from src.cloud.rendering import (
     BridgePayload,
     EdgePayload,
     NodePayload,
+    RenderItem,
     ambient_morph_priority,
     choose_cloud_sprite_family,
     cloud_bridge_count,
     cloud_node_wobble,
     collect_cloud_render_items,
+    depth_sort_bucket,
+    render_item_sort_key,
     single_node_mesh_intensity,
     single_node_mesh_phase,
 )
@@ -121,14 +124,21 @@ class AssetsRenderingWebTests(unittest.TestCase):
         items = collect_cloud_render_items(simulation.state, camera)
 
         self.assertGreaterEqual(len(items), 3)
-        expected_order = sorted(
-            items,
-            key=lambda item: (-item.depth, item.layer_bias, item.stable_id),
-        )
+        expected_order = sorted(items, key=render_item_sort_key)
         self.assertEqual(items, expected_order)
         self.assertTrue(any(isinstance(item.payload, EdgePayload) for item in items))
         self.assertTrue(any(isinstance(item.payload, BridgePayload) for item in items))
         self.assertTrue(any(isinstance(item.payload, NodePayload) for item in items))
+
+    def test_depth_sort_bucket_keeps_near_equal_items_stable(self) -> None:
+        far_id = RenderItem(depth=100.10, layer_bias=2, stable_id=20, payload=object())
+        near_id = RenderItem(depth=100.00, layer_bias=2, stable_id=10, payload=object())
+
+        self.assertEqual(depth_sort_bucket(far_id.depth), depth_sort_bucket(near_id.depth))
+        self.assertEqual(
+            sorted((far_id, near_id), key=render_item_sort_key),
+            [near_id, far_id],
+        )
 
     def test_bridge_rendering_fills_gap_then_thins_under_strain(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))
@@ -276,6 +286,79 @@ class AssetsRenderingWebTests(unittest.TestCase):
             choose_cloud_sprite_family(upper, simulation.state, camera, upper_projection),
             CloudSpriteFamily.UPDRAFT,
         )
+
+    def test_runtime_holds_projected_sprite_role_briefly(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        lower = simulation.state.nodes[result.node_id]
+        upper = create_node(
+            simulation.state,
+            lower.lineage_id,
+            lower.cluster_id,
+            lower.position + Vec3(0.0, 24.0, 0.0),
+            simulation.rng,
+            parent_node_id=lower.id,
+            generation=1,
+        )
+        add_edge(
+            simulation.state,
+            lower.lineage_id,
+            lower.cluster_id,
+            lower.id,
+            upper.id,
+            EdgeKind.PRIMARY,
+        )
+        recompute_clusters(simulation.state, lower.lineage_id)
+        runtime = WeatherMotionRuntime()
+
+        first_items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=10,
+            motion_runtime=runtime,
+        )
+        first_payloads = {
+            item.payload.node.id: item.payload
+            for item in first_items
+            if isinstance(item.payload, NodePayload)
+        }
+        self.assertEqual(first_payloads[lower.id].family, CloudSpriteFamily.BOTTOM)
+
+        upper.position = lower.position + Vec3(0.0, -24.0, 0.0)
+        upper.previous_position = upper.position
+        lower_projection = project_point(lower.position, camera)
+        self.assertEqual(
+            choose_cloud_sprite_family(lower, simulation.state, camera, lower_projection),
+            CloudSpriteFamily.UPDRAFT,
+        )
+
+        held_items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=11,
+            motion_runtime=runtime,
+        )
+        held_payloads = {
+            item.payload.node.id: item.payload
+            for item in held_items
+            if isinstance(item.payload, NodePayload)
+        }
+        self.assertEqual(held_payloads[lower.id].family, CloudSpriteFamily.BOTTOM)
+
+        switched_items = collect_cloud_render_items(
+            simulation.state,
+            camera,
+            frame=10 + config.CLOUD_ROLE_MIN_HOLD_FRAMES + 1,
+            motion_runtime=runtime,
+        )
+        switched_payloads = {
+            item.payload.node.id: item.payload
+            for item in switched_items
+            if isinstance(item.payload, NodePayload)
+        }
+        self.assertEqual(switched_payloads[lower.id].family, CloudSpriteFamily.UPDRAFT)
 
     def test_sprite_family_uses_projected_internal_when_surrounded(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))

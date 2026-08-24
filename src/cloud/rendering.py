@@ -43,6 +43,7 @@ class NodePayload:
     node: CloudNode
     projection: ProjectedPoint
     sprite: SpriteRect
+    family: CloudSpriteFamily
     offset_x: float = 0.0
     offset_y: float = 0.0
     mesh_intensity: float = 0.0
@@ -60,6 +61,15 @@ class RenderItem:
     payload: EdgePayload | BridgePayload | NodePayload
 
 
+def depth_sort_bucket(depth: float) -> int:
+    bucket_size = max(0.001, config.DEPTH_SORT_BUCKET_SIZE)
+    return int(round(depth / bucket_size))
+
+
+def render_item_sort_key(item: RenderItem) -> tuple[int, int, int]:
+    return -depth_sort_bucket(item.depth), item.layer_bias, item.stable_id
+
+
 def collect_cloud_render_items(
     state: CloudState,
     camera: CameraBasis,
@@ -69,6 +79,8 @@ def collect_cloud_render_items(
 ) -> list[RenderItem]:
     items: list[RenderItem] = []
     morph_variants: dict[int, int] = {}
+    if motion_runtime is not None:
+        motion_runtime.prune_sprite_role_states({node.id for node in state.live_nodes()})
     if motion_atlas is not None and motion_runtime is not None:
         morph_variants = collect_ambient_morph_variants(
             state,
@@ -140,7 +152,15 @@ def collect_cloud_render_items(
                 response_kind = motion_runtime.response_kind(node.id, frame)
         mesh_intensity = single_node_mesh_intensity(node, state, screen_radius)
         mesh_phase = single_node_mesh_phase(node, frame)
-        family = choose_cloud_sprite_family(node, state, camera, projection)
+        family_scores = cloud_sprite_family_scores(node, state, camera, projection)
+        family = select_cloud_sprite_family(family_scores)
+        if motion_runtime is not None:
+            family = motion_runtime.stabilize_sprite_family(
+                node.id,
+                family,
+                family_scores,
+                frame,
+            )
         morph_variant = morph_variants.get(node.id, 0)
         sprite = cloud_sprite_rect(
             family,
@@ -156,6 +176,7 @@ def collect_cloud_render_items(
                     node,
                     projection,
                     sprite,
+                    family,
                     offset_x,
                     offset_y,
                     mesh_intensity,
@@ -167,7 +188,7 @@ def collect_cloud_render_items(
             )
         )
 
-    items.sort(key=lambda item: (-item.depth, item.layer_bias, item.stable_id))
+    items.sort(key=render_item_sort_key)
     return items
 
 
@@ -352,40 +373,70 @@ def single_node_mesh_phase(node: CloudNode, frame: int) -> float:
     return seconds * math.tau / config.CLOUD_SINGLE_MESH_PERIOD + phase
 
 
-def projected_cloud_sprite_family(
+def projected_cloud_sprite_family_scores(
     node: CloudNode,
     edge_count: int,
     projection: ProjectedPoint,
     neighbor_projections: list[ProjectedPoint],
-) -> CloudSpriteFamily:
+) -> dict[CloudSpriteFamily, float]:
     gap = config.CLOUD_ROLE_EXPOSURE_GAP_PX
     has_above = any(other.screen_y < projection.screen_y - gap for other in neighbor_projections)
     has_below = any(other.screen_y > projection.screen_y + gap for other in neighbor_projections)
     has_left = any(other.screen_x < projection.screen_x - gap for other in neighbor_projections)
     has_right = any(other.screen_x > projection.screen_x + gap for other in neighbor_projections)
 
+    scores: dict[CloudSpriteFamily, float] = {CloudSpriteFamily.EDGE: 0.52}
     if edge_count >= 4 and has_above and has_below and has_left and has_right:
-        return CloudSpriteFamily.INTERNAL
+        scores[CloudSpriteFamily.INTERNAL] = 1.0
     if has_above and not has_below:
-        return CloudSpriteFamily.BOTTOM
+        scores[CloudSpriteFamily.BOTTOM] = 1.0
     if has_below and not has_above:
-        return CloudSpriteFamily.UPDRAFT
+        scores[CloudSpriteFamily.UPDRAFT] = 1.0
     if edge_count >= 3 and has_left and has_right and (has_above or has_below):
-        return CloudSpriteFamily.INTERNAL
+        scores[CloudSpriteFamily.INTERNAL] = max(
+            scores.get(CloudSpriteFamily.INTERNAL, 0.0),
+            0.86,
+        )
     if node.noise < 0.14 and edge_count >= 3:
-        return CloudSpriteFamily.INTERNAL
-    return CloudSpriteFamily.EDGE
+        scores[CloudSpriteFamily.INTERNAL] = max(
+            scores.get(CloudSpriteFamily.INTERNAL, 0.0),
+            0.78,
+        )
+    return scores
 
 
-def choose_cloud_sprite_family(
+def projected_cloud_sprite_family(
+    node: CloudNode,
+    edge_count: int,
+    projection: ProjectedPoint,
+    neighbor_projections: list[ProjectedPoint],
+) -> CloudSpriteFamily:
+    return select_cloud_sprite_family(
+        projected_cloud_sprite_family_scores(
+            node,
+            edge_count,
+            projection,
+            neighbor_projections,
+        )
+    )
+
+
+def select_cloud_sprite_family(
+    scores: dict[CloudSpriteFamily, float],
+) -> CloudSpriteFamily:
+    return max(scores, key=lambda family: (scores[family], -list(CloudSpriteFamily).index(family)))
+
+
+def cloud_sprite_family_scores(
     node: CloudNode,
     state: CloudState,
     camera: CameraBasis | None = None,
     projection: ProjectedPoint | None = None,
-) -> CloudSpriteFamily:
+) -> dict[CloudSpriteFamily, float]:
     if node.is_pruning or node.fade < 0.7:
-        return CloudSpriteFamily.FADE
+        return {CloudSpriteFamily.FADE: 1.0}
     edge_count = 0
+    has_primary_edge = False
     neighbor_projections: list[ProjectedPoint] = []
     for edge in state.edges.values():
         if edge.node_a == node.id:
@@ -396,25 +447,41 @@ def choose_cloud_sprite_family(
             neighbor = state.nodes[edge.node_a]
         else:
             continue
+        if edge.kind is EdgeKind.PRIMARY:
+            has_primary_edge = True
         if camera is not None:
             neighbor_projection = project_point(neighbor.position, camera)
             if neighbor_projection.visible:
                 neighbor_projections.append(neighbor_projection)
 
     if projection is not None and neighbor_projections:
-        return projected_cloud_sprite_family(node, edge_count, projection, neighbor_projections)
+        return projected_cloud_sprite_family_scores(
+            node,
+            edge_count,
+            projection,
+            neighbor_projections,
+        )
 
+    scores: dict[CloudSpriteFamily, float] = {CloudSpriteFamily.STRETCH: 0.42}
     if node.updraft > 0.35:
-        return CloudSpriteFamily.UPDRAFT
+        scores[CloudSpriteFamily.UPDRAFT] = min(1.0, 0.76 + (node.updraft - 0.35) * 0.48)
     if node.density > 1.35:
-        return CloudSpriteFamily.BOTTOM
+        scores[CloudSpriteFamily.BOTTOM] = min(1.0, 0.78 + (node.density - 1.35) * 0.42)
     if edge_count == 0:
-        return CloudSpriteFamily.FRAGMENT
-    if node.noise < 0.14:
-        return CloudSpriteFamily.INTERNAL
-    if any(
-        edge.kind is EdgeKind.PRIMARY and (edge.node_a == node.id or edge.node_b == node.id)
-        for edge in state.edges.values()
-    ):
-        return CloudSpriteFamily.EDGE
-    return CloudSpriteFamily.STRETCH
+        scores[CloudSpriteFamily.FRAGMENT] = 0.72
+    if node.noise < 0.14 and edge_count > 0:
+        scores[CloudSpriteFamily.INTERNAL] = 0.74
+    if has_primary_edge:
+        scores[CloudSpriteFamily.EDGE] = 0.68
+    return scores
+
+
+def choose_cloud_sprite_family(
+    node: CloudNode,
+    state: CloudState,
+    camera: CameraBasis | None = None,
+    projection: ProjectedPoint | None = None,
+) -> CloudSpriteFamily:
+    return select_cloud_sprite_family(
+        cloud_sprite_family_scores(node, state, camera, projection)
+    )
