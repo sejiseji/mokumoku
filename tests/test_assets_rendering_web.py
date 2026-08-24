@@ -19,6 +19,7 @@ from src.camera.projection import project_point
 from src.cloud.graph import add_edge, create_node, recompute_clusters
 from src.cloud.rendering import (
     BridgePayload,
+    CloudDepthLayer,
     EdgePayload,
     NodePayload,
     RenderItem,
@@ -139,6 +140,42 @@ class AssetsRenderingWebTests(unittest.TestCase):
             sorted((far_id, near_id), key=render_item_sort_key),
             [near_id, far_id],
         )
+
+    def test_node_payload_marks_front_middle_and_back_depth_layers(self) -> None:
+        simulation = CloudSimulation(RandomSource(12345))
+        camera = build_camera_basis(0.0)
+        result = simulation.tap_screen(160.0, 190.0, camera)
+        self.assertIsNotNone(result.node_id)
+        center = simulation.state.nodes[result.node_id]
+        front = create_node(
+            simulation.state,
+            center.lineage_id,
+            center.cluster_id,
+            center.position - camera.forward * 24.0,
+            simulation.rng,
+            parent_node_id=center.id,
+            generation=1,
+        )
+        back = create_node(
+            simulation.state,
+            center.lineage_id,
+            center.cluster_id,
+            center.position + camera.forward * 24.0,
+            simulation.rng,
+            parent_node_id=center.id,
+            generation=1,
+        )
+
+        items = collect_cloud_render_items(simulation.state, camera)
+        payloads = {
+            item.payload.node.id: item.payload
+            for item in items
+            if isinstance(item.payload, NodePayload)
+        }
+
+        self.assertEqual(payloads[front.id].depth_layer, CloudDepthLayer.FRONT)
+        self.assertEqual(payloads[center.id].depth_layer, CloudDepthLayer.MIDDLE)
+        self.assertEqual(payloads[back.id].depth_layer, CloudDepthLayer.BACK)
 
     def test_bridge_rendering_fills_gap_then_thins_under_strain(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))

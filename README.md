@@ -20,7 +20,7 @@ Cloud Seed Ecology では、弱いWaveを受けたDormant Seedはすぐ発芽せ
 
 Continuous Camera Dial では、地上下部の横型ダイヤルで yaw を -32°〜+32° の範囲で連続操作できます。ダイヤル操作中は雲入力を止め、生成済み雲のworld座標は変えずに投影と描画順だけを更新します。
 
-Cloud Volume Readability Pass では、近接depthをバケット化して描画順の細かな反転を抑え、投影上の `INTERNAL` / `EDGE` / `BOTTOM` / `UPDRAFT` などの役割が境界で即座にパタつかないよう、短い保持時間とスコア差によるヒステリシスを入れています。
+Cloud Volume Readability Pass では、近接depthをバケット化して描画順の細かな反転を抑え、投影上の `INTERNAL` / `EDGE` / `BOTTOM` / `UPDRAFT` などの役割が境界で即座にパタつかないよう、短い保持時間とスコア差によるヒステリシスを入れています。さらにクラスタ内の相対depthから手前・中間・奥のlayerを割り当て、奥の雲房は少し弱い色で描いて立体雲の重なりを読みやすくしています。
 
 ## Requirements
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from enum import IntEnum
 
 from src import config
 from src.assets.sprite_map import (
@@ -38,12 +39,19 @@ class BridgePayload:
     visual_radius: float
 
 
+class CloudDepthLayer(IntEnum):
+    FRONT = 0
+    MIDDLE = 1
+    BACK = 2
+
+
 @dataclass(frozen=True)
 class NodePayload:
     node: CloudNode
     projection: ProjectedPoint
     sprite: SpriteRect
     family: CloudSpriteFamily
+    depth_layer: CloudDepthLayer
     offset_x: float = 0.0
     offset_y: float = 0.0
     mesh_intensity: float = 0.0
@@ -70,6 +78,27 @@ def render_item_sort_key(item: RenderItem) -> tuple[int, int, int]:
     return -depth_sort_bucket(item.depth), item.layer_bias, item.stable_id
 
 
+def cloud_depth_layer(
+    node: CloudNode,
+    projection: ProjectedPoint,
+    cluster_depth_ranges: dict[int, tuple[float, float]],
+) -> CloudDepthLayer:
+    depth_range = cluster_depth_ranges.get(node.cluster_id)
+    if depth_range is None:
+        return CloudDepthLayer.MIDDLE
+    front_depth, back_depth = depth_range
+    depth_span = back_depth - front_depth
+    if depth_span < config.CLOUD_DEPTH_LAYER_MIN_SPAN:
+        return CloudDepthLayer.MIDDLE
+
+    depth_t = (projection.depth - front_depth) / depth_span
+    if depth_t <= config.CLOUD_DEPTH_FRONT_THRESHOLD:
+        return CloudDepthLayer.FRONT
+    if depth_t >= config.CLOUD_DEPTH_BACK_THRESHOLD:
+        return CloudDepthLayer.BACK
+    return CloudDepthLayer.MIDDLE
+
+
 def collect_cloud_render_items(
     state: CloudState,
     camera: CameraBasis,
@@ -79,8 +108,23 @@ def collect_cloud_render_items(
 ) -> list[RenderItem]:
     items: list[RenderItem] = []
     morph_variants: dict[int, int] = {}
+    visible_nodes: list[tuple[CloudNode, ProjectedPoint]] = []
+    cluster_depth_ranges: dict[int, tuple[float, float]] = {}
+    for node in state.live_nodes():
+        projection = project_point(node.position, camera)
+        if not projection.visible:
+            continue
+        visible_nodes.append((node, projection))
+        current_range = cluster_depth_ranges.get(node.cluster_id)
+        if current_range is None:
+            cluster_depth_ranges[node.cluster_id] = (projection.depth, projection.depth)
+        else:
+            cluster_depth_ranges[node.cluster_id] = (
+                min(current_range[0], projection.depth),
+                max(current_range[1], projection.depth),
+            )
     if motion_runtime is not None:
-        motion_runtime.prune_sprite_role_states({node.id for node in state.live_nodes()})
+        motion_runtime.prune_sprite_role_states({node.id for node, _projection in visible_nodes})
     if motion_atlas is not None and motion_runtime is not None:
         morph_variants = collect_ambient_morph_variants(
             state,
@@ -121,10 +165,7 @@ def collect_cloud_render_items(
                     )
                 )
 
-    for node in state.live_nodes():
-        projection = project_point(node.position, camera)
-        if not projection.visible:
-            continue
+    for node, projection in visible_nodes:
         screen_radius = node.radius * projection.scale
         size_class = size_class_for_screen_radius(screen_radius)
         if motion_atlas is None:
@@ -161,6 +202,7 @@ def collect_cloud_render_items(
                 family_scores,
                 frame,
             )
+        depth_layer = cloud_depth_layer(node, projection, cluster_depth_ranges)
         morph_variant = morph_variants.get(node.id, 0)
         sprite = cloud_sprite_rect(
             family,
@@ -177,6 +219,7 @@ def collect_cloud_render_items(
                     projection,
                     sprite,
                     family,
+                    depth_layer,
                     offset_x,
                     offset_y,
                     mesh_intensity,

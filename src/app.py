@@ -13,6 +13,7 @@ from src.cloud.incubation import build_adjacency, node_retention_score
 from src.cloud.reaction import ReactionEventKind, charge_level, reaction_radius_px
 from src.cloud.rendering import (
     BridgePayload,
+    CloudDepthLayer,
     EdgePayload,
     NodePayload,
     collect_cloud_render_items,
@@ -632,23 +633,39 @@ class MokumokuApp:
         y = int(projection.screen_y + payload.offset_y - sprite.height / 2)
 
         if self.assets_loaded:
-            pyxel.blt(
-                x,
-                y,
-                sprite.image,
-                sprite.u,
-                sprite.v,
-                sprite.width,
-                sprite.height,
-                sprite.colkey,
-            )
+            self.draw_cloud_sprite(payload, x, y)
             if payload.mesh_intensity > 0.0:
                 self.draw_single_cloud_mesh(payload, x, y)
             self.draw_cloud_shape_overlay(payload, x, y)
         else:
             radius = max(2, int(node.radius * projection.scale * max(0.25, node.fade)))
-            pyxel.circ(x, y, radius, 7)
+            color = 6 if payload.depth_layer is CloudDepthLayer.BACK else 7
+            pyxel.circ(
+                int(projection.screen_x + payload.offset_x),
+                int(projection.screen_y + payload.offset_y),
+                radius,
+                color,
+            )
             self.draw_cloud_shape_overlay(payload, x, y)
+
+    def draw_cloud_sprite(self, payload: NodePayload, x: int, y: int) -> None:
+        pyxel = self.pyxel
+        sprite = payload.sprite
+        if payload.depth_layer is CloudDepthLayer.BACK:
+            pyxel.pal(7, 6)
+            pyxel.pal(6, 5)
+        pyxel.blt(
+            x,
+            y,
+            sprite.image,
+            sprite.u,
+            sprite.v,
+            sprite.width,
+            sprite.height,
+            sprite.colkey,
+        )
+        if payload.depth_layer is CloudDepthLayer.BACK:
+            pyxel.pal()
 
     def draw_cloud_shape_overlay(self, payload: NodePayload, x: int, y: int) -> None:
         if (
@@ -663,6 +680,8 @@ class MokumokuApp:
         cx = x + sprite.width // 2
         cy = y + sprite.height // 2
         scale = sprite.width / 16.0
+        bright = 6 if payload.depth_layer is CloudDepthLayer.BACK else 7
+        middle = 5 if payload.depth_layer is CloudDepthLayer.BACK else 6
 
         def unit(value: float) -> int:
             return int(round(value * scale))
@@ -671,42 +690,42 @@ class MokumokuApp:
             pyxel.circ(cx + unit(px), cy + unit(py), max(1, unit(radius)), color)
 
         if payload.shape_level >= 1:
-            puff(-7.0, -1.5, 0.8, 7)
-            puff(6.0, 2.5, 0.7, 6)
+            puff(-7.0, -1.5, 0.8, bright)
+            puff(6.0, 2.5, 0.7, middle)
         if payload.shape_level >= 2:
-            puff(-2.0, -7.0, 0.8, 7)
-            puff(2.5, 6.5, 0.7, 6)
+            puff(-2.0, -7.0, 0.8, bright)
+            puff(2.5, 6.5, 0.7, middle)
 
         growth = payload.growth_level
         response_kind = payload.response_kind or TouchResponseKind.TAP
         if response_kind is TouchResponseKind.DRAG_START:
             if growth >= 2:
-                puff(-7.0, 0.0, 0.8, 7)
-                puff(7.0, 0.0, 0.8, 7)
+                puff(-7.0, 0.0, 0.8, bright)
+                puff(7.0, 0.0, 0.8, bright)
             if growth >= 5:
                 pyxel.line(
                     cx + unit(-7.0),
                     cy + unit(0.0),
                     cx + unit(7.0),
                     cy + unit(0.0),
-                    7,
+                    bright,
                 )
         elif response_kind is TouchResponseKind.DRAG_HOLD:
             if growth >= 1:
-                puff(-7.5, -1.0, 0.7, 6)
-                puff(7.5, 1.0, 0.7, 6)
+                puff(-7.5, -1.0, 0.7, middle)
+                puff(7.5, 1.0, 0.7, middle)
             if growth >= 4:
                 pyxel.line(
                     cx + unit(-6.0),
                     cy + unit(2.5),
                     cx + unit(6.0),
                     cy + unit(-2.5),
-                    6,
+                    middle,
                 )
         elif response_kind is TouchResponseKind.LONG_PRESS:
             if growth >= 2:
-                puff(-4.5, 4.5, 0.9, 6)
-                puff(4.0, 5.0, 0.9, 6)
+                puff(-4.5, 4.5, 0.9, middle)
+                puff(4.0, 5.0, 0.9, middle)
             if growth >= 8:
                 pyxel.line(
                     cx + unit(-5.5),
@@ -717,22 +736,22 @@ class MokumokuApp:
                 )
         elif response_kind is TouchResponseKind.RELEASE:
             if growth >= 2:
-                puff(-3.0, -3.0, 0.6, 7)
-                puff(3.0, 3.0, 0.6, 6)
+                puff(-3.0, -3.0, 0.6, bright)
+                puff(3.0, 3.0, 0.6, middle)
         else:
             if growth >= 2:
-                puff(-5.5, -4.5, 0.7, 7)
+                puff(-5.5, -4.5, 0.7, bright)
             if growth >= 5:
-                puff(5.0, -4.5, 0.8, 7)
+                puff(5.0, -4.5, 0.8, bright)
             if growth >= 8:
-                puff(0.5, 7.0, 0.7, 6)
+                puff(0.5, 7.0, 0.7, middle)
             if growth >= 9:
                 pyxel.line(
                     cx + unit(-3.0),
                     cy + unit(-7.0),
                     cx + unit(3.0),
                     cy + unit(-7.0),
-                    7,
+                    bright,
                 )
 
     def draw_single_cloud_mesh(self, payload: NodePayload, x: int, y: int) -> None:
