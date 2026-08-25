@@ -36,6 +36,8 @@ Cloud Surface Cohesion では、CloudNodeをそのまま全て可視スプライ
 
 Cloud Material & Lighting では、背面Lobe全体を強く暗色化するのではなく、Bodyは共有色でつなぎ、Surface Lobeの露出方向へだけ上側の明部と下側の影を描きます。Growth Pulseや長押し反応も小粒を追加するのではなく、Lobe輪郭を一時的に押し出す面Morphとして表示します。
 
+Cloud Sprite Text Pack では、雲スプライトをPNGではなく `0`〜`F` の文字列定義から生成します。9 family × 4 size × 3 variant の108枚を40pxセルの6×6アトラスへ収め、Pyxelの256×256 image bank内で安全に配置します。Variantの重心移動とBBox変化はテストで制限し、素材側からプルプルした見え方を抑えます。配置仕様は `docs/cloud_sprite_atlas_layout.md` にまとめています。
+
 ## Requirements
 
 - Python 3.11+
