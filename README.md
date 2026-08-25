@@ -2,7 +2,7 @@
 
 雲遊びゲーム「雲とひとびと / MOKUMOKU Prototype」の段階的プロトタイプです。
 
-現在の実装範囲は Prototype A14 Cloud Material & Lighting 初回パスです。A0〜A13 基盤に加えて、表面Lobeへ露出方向マスクを持たせ、雲全体の下地はBodyとしてつなぎつつ、外周だけにハイライト・雲底影・入力時の面Morphを載せる描画へ移行しています。
+現在の実装範囲は Prototype A14 Cloud Material & Lighting Tightening Pass です。A0〜A13 基盤に加えて、表面Lobeへ露出方向マスクを持たせ、雲全体の下地はBodyとしてつなぎつつ、外周だけにハイライト・雲底影・入力時の面Morphを載せる描画へ移行しています。さらにINTERNALをBody Fill専用へ寄せ、密な内部ノードの個別Lobe表示を抑えています。
 
 Quiet Motion Pass では、Ambient時のノード中心移動とサイズpulseを止め、外縁ノードだけを疎にsprite variant morphさせます。タップ、長押し、ドラッグ開始、フリックの反応は一回性のGrowthPulseとして扱い、グラフ距離2まで遅延伝播します。
 
@@ -20,7 +20,7 @@ Cloud Seed Ecology では、弱いWaveを受けたDormant Seedはすぐ発芽せ
 
 Continuous Camera Dial では、地上下部の横型ダイヤルで yaw を -32°〜+32° の範囲で連続操作できます。ダイヤル操作中は雲入力を止め、生成済み雲のworld座標は変えずに投影と描画順だけを更新します。
 
-Cloud Volume Readability Pass では、近接depthをバケット化して描画順の細かな反転を抑え、投影上の `INTERNAL` / `EDGE` / `BOTTOM` / `UPDRAFT` などの役割が境界で即座にパタつかないよう、短い保持時間とスコア差によるヒステリシスを入れています。さらにクラスタ内の相対depthから手前・中間・奥のlayerを割り当て、奥の雲房は少し弱い色で描いて立体雲の重なりを読みやすくしています。
+Cloud Volume Readability Pass では、近接depthをバケット化して描画順の細かな反転を抑え、投影上の `INTERNAL` / `EDGE` / `BOTTOM` / `UPDRAFT` などの役割が境界で即座にパタつかないよう、短い保持時間とスコア差によるヒステリシスを入れています。さらにクラスタ内の相対depthから手前・中間・奥のlayerを割り当て、奥の雲房は全体を青くせず、露出方向の明部を減らして立体雲の重なりを読みやすくしています。
 
 Stacked Birth Volume では、既存雲の上端や上昇流の強いノードを刺激した時、新規Seed候補のBirth Volumeを小さめにして上方向へ寄せます。これにより、同じ反応円でも雲房が水平に広がるだけでなく、上へ積み上がる入道雲らしい成長を始めます。
 
@@ -39,6 +39,8 @@ Cloud Material & Lighting では、背面Lobe全体を強く暗色化するの�
 Cloud Sprite Text Pack では、雲スプライトをPNGではなく `0`〜`F` の文字列定義から生成します。9 family × 4 size × 3 variant の108枚を40pxセルの6×6アトラスへ収め、Pyxelの256×256 image bank内で安全に配置します。Variantの重心移動とBBox変化はテストで制限し、素材側からプルプルした見え方を抑えます。配置仕様は `docs/cloud_sprite_atlas_layout.md` にまとめています。
 
 Cloud-Shape Patch v0.2 では、INTERNAL / EDGE / BOTTOM / UPDRAFT / STRETCH を、単一の円やドームではなく、上側に複数の雲房が連なる小さな雲のシルエットへ差し替えています。FRAGMENT / FADE / SERENDIPITY / CHARGE はv0.1定義を維持し、成熟雲のBodyとSurface Lobeだけが小雲らしく読める素材構成にしています。
+
+Cloud-Shape Patch v0.3 では、INTERNALを単体の雲アイコンではなく横長の白いBody Fillパッチへ再設計しています。密なクラスタではINTERNALのSurface Lobeを原則抑制し、EDGE / BOTTOM / UPDRAFTだけが外周の雲房として出やすいよう、露出判定とNon-Maximum Suppressionも強めています。Depth Shadingは背面Lobe全体の色置換をやめ、雲底や接触境界の短い影だけへ絞っています。
 
 ## Requirements
 

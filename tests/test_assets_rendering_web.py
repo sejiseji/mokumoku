@@ -752,11 +752,23 @@ class AssetsRenderingWebTests(unittest.TestCase):
         node_payloads = [
             item.payload for item in items if isinstance(item.payload, NodePayload)
         ]
+        live_node_count = len(list(simulation.state.live_nodes()))
+        max_surface_lobes = max(
+            config.CLOUD_SURFACE_MIN_LOBES,
+            int(live_node_count * config.CLOUD_SURFACE_MAX_LOBE_RATIO) + 1,
+        )
 
-        self.assertGreaterEqual(len(body_payloads), 1)
-        self.assertLess(len(node_payloads), len(simulation.state.live_nodes()))
+        self.assertGreaterEqual(len(body_payloads), live_node_count)
+        self.assertLess(len(node_payloads), live_node_count)
+        self.assertLessEqual(len(node_payloads), max_surface_lobes)
         self.assertTrue(all(0.0 <= payload.surface_exposure <= 1.0 for payload in node_payloads))
-        self.assertTrue(any(payload.exposure_mask > 0 for payload in node_payloads))
+        self.assertFalse(
+            any(
+                payload.family is CloudSpriteFamily.INTERNAL
+                and payload.surface_exposure < config.CLOUD_SURFACE_WEAK_EXPOSURE
+                for payload in node_payloads
+            )
+        )
 
     def test_surface_metrics_use_unconnected_projected_neighbors(self) -> None:
         simulation = CloudSimulation(RandomSource(12345))

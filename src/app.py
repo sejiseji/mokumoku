@@ -679,8 +679,6 @@ class MokumokuApp:
     def draw_cloud_sprite(self, payload: NodePayload, x: int, y: int) -> None:
         pyxel = self.pyxel
         sprite = payload.sprite
-        if payload.depth_layer is CloudDepthLayer.BACK:
-            pyxel.pal(7, 6)
         pyxel.blt(
             x,
             y,
@@ -691,8 +689,6 @@ class MokumokuApp:
             sprite.height,
             sprite.colkey,
         )
-        if payload.depth_layer is CloudDepthLayer.BACK:
-            pyxel.pal()
 
     def draw_cloud_surface_light(self, payload: NodePayload, x: int, y: int) -> None:
         if payload.family in (CloudSpriteFamily.INTERNAL, CloudSpriteFamily.FADE):
@@ -706,12 +702,23 @@ class MokumokuApp:
         cy = y + sprite.height // 2
         radius = max(4, int(sprite.width * 0.43))
         direction_count = max(4, config.CLOUD_SURFACE_DIRECTION_COUNT)
-        bright = 6 if payload.depth_layer is CloudDepthLayer.BACK else 7
-        middle = 5 if payload.depth_layer is CloudDepthLayer.BACK else 6
+        bright = 7
+        middle = 6
         shadow = 5
 
-        highlight_budget = 4 if payload.depth_layer is CloudDepthLayer.FRONT else 2
-        shadow_budget = 3
+        if payload.depth_layer is CloudDepthLayer.BACK:
+            highlight_budget = 0
+            shadow_budget = (
+                1
+                if (
+                    payload.family is CloudSpriteFamily.BOTTOM
+                    and payload.surface_exposure >= config.CLOUD_SURFACE_STRONG_EXPOSURE
+                )
+                else 0
+            )
+        else:
+            highlight_budget = 3 if payload.depth_layer is CloudDepthLayer.FRONT else 2
+            shadow_budget = 2
         for index in range(direction_count):
             if payload.exposure_mask and not (payload.exposure_mask & (1 << index)):
                 continue
@@ -785,6 +792,25 @@ class MokumokuApp:
         response_kind = payload.response_kind or TouchResponseKind.TAP
         expansion = min(3, max(1, growth // 4))
         response_radius = radius + expansion
+
+        def contour_arc(
+            start_turn: float,
+            end_turn: float,
+            *,
+            color: int,
+            steps: int = 4,
+            y_scale: float = 0.86,
+        ) -> None:
+            previous: tuple[int, int] | None = None
+            for index in range(steps):
+                t = index / max(1, steps - 1)
+                angle = math.tau * (start_turn + (end_turn - start_turn) * t)
+                px = int(round(cx + math.cos(angle) * response_radius))
+                py = int(round(cy + math.sin(angle) * response_radius * y_scale))
+                if previous is not None:
+                    pyxel.line(previous[0], previous[1], px, py, color)
+                previous = (px, py)
+
         if response_kind is TouchResponseKind.DRAG_START:
             pyxel.line(cx - response_radius, cy, cx + response_radius, cy, bright)
             if growth >= 5:
@@ -804,7 +830,8 @@ class MokumokuApp:
                 middle,
             )
         elif response_kind is TouchResponseKind.LONG_PRESS:
-            pyxel.circb(cx, cy + 1, response_radius, middle)
+            contour_arc(0.69, 0.81, color=middle)
+            contour_arc(0.19, 0.31, color=5 if growth >= 8 else middle, steps=3)
             if growth >= 8:
                 pyxel.line(
                     cx - response_radius // 2,
@@ -814,9 +841,12 @@ class MokumokuApp:
                     5,
                 )
         elif response_kind is TouchResponseKind.RELEASE:
-            pyxel.circb(cx, cy, max(3, response_radius - 1), middle)
+            response_radius = max(3, response_radius - 1)
+            contour_arc(0.18, 0.32, color=middle, steps=3)
         else:
-            pyxel.circb(cx, cy, response_radius, middle)
+            contour_arc(0.70, 0.82, color=middle)
+            if growth >= 4:
+                contour_arc(0.17, 0.28, color=5, steps=3)
             if growth >= 6:
                 pyxel.line(
                     cx - response_radius // 3,

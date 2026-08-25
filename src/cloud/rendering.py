@@ -195,6 +195,7 @@ def cloud_surface_metrics(
 
 def protected_surface_lobe_ids(
     visible_nodes: list[tuple[CloudNode, ProjectedPoint]],
+    surface_metrics: dict[int, SurfaceMetrics],
     frame: int,
     motion_runtime: WeatherMotionRuntime | None,
 ) -> set[int]:
@@ -202,9 +203,19 @@ def protected_surface_lobe_ids(
         return set()
     protected: set[int] = set()
     for node, _projection in visible_nodes:
-        if motion_runtime.response_kind(node.id, frame) is not None:
+        metric = surface_metrics.get(node.id, SurfaceMetrics(1.0, 0, 0))
+        if (
+            motion_runtime.response_kind(node.id, frame) is not None
+            and response_lobe_can_break_surface(metric)
+        ):
             protected.add(node.id)
     return protected
+
+
+def response_lobe_can_break_surface(metric: SurfaceMetrics) -> bool:
+    if metric.neighbor_count <= 2:
+        return True
+    return metric.exposure >= config.CLOUD_SURFACE_INTERNAL_EXPOSURE
 
 
 def select_surface_lobe_ids(
@@ -263,6 +274,24 @@ def select_surface_lobe_ids(
             selected.add(node.id)
             accepted.append((node, projection))
     return selected
+
+
+def should_draw_node_lobe(
+    node: CloudNode,
+    family: CloudSpriteFamily,
+    metric: SurfaceMetrics,
+    response_kind: TouchResponseKind | None,
+    growth_level: int,
+) -> bool:
+    if is_visible_dormant_seed(node, metric):
+        return True
+    if metric.neighbor_count < 3:
+        return True
+    if family is not CloudSpriteFamily.INTERNAL:
+        return True
+    if metric.exposure < config.CLOUD_SURFACE_WEAK_EXPOSURE:
+        return False
+    return response_kind is not None or growth_level > 0
 
 
 def surface_lobe_score(
@@ -427,6 +456,7 @@ def collect_cloud_render_items(
     visible_lineage_counts = visible_lineage_node_counts(visible_nodes)
     protected_lobe_ids = protected_surface_lobe_ids(
         visible_nodes,
+        surface_metrics,
         frame,
         motion_runtime,
     )
@@ -533,6 +563,14 @@ def collect_cloud_render_items(
                 family_scores,
                 frame,
             )
+        if not should_draw_node_lobe(
+            node,
+            family,
+            surface_metric,
+            response_kind,
+            growth_level,
+        ):
+            continue
         depth_layer = cloud_depth_layer(node, projection, cluster_depth_ranges)
         morph_variant = morph_variants.get(node.id, 0)
         sprite = cloud_sprite_rect(
@@ -869,17 +907,17 @@ def apply_surface_metric_family_bias(
     if metric.exposure < config.CLOUD_SURFACE_INTERNAL_EXPOSURE:
         scores[CloudSpriteFamily.INTERNAL] = max(
             scores.get(CloudSpriteFamily.INTERNAL, 0.0),
-            1.05,
+            1.12,
         )
-        scores[CloudSpriteFamily.EDGE] = min(scores.get(CloudSpriteFamily.EDGE, 0.0), 0.34)
+        scores[CloudSpriteFamily.EDGE] = min(scores.get(CloudSpriteFamily.EDGE, 0.0), 0.24)
         scores.pop(CloudSpriteFamily.FRAGMENT, None)
         return
     if metric.exposure < config.CLOUD_SURFACE_WEAK_EXPOSURE:
         scores[CloudSpriteFamily.INTERNAL] = max(
             scores.get(CloudSpriteFamily.INTERNAL, 0.0),
-            0.82,
+            0.94,
         )
-        scores[CloudSpriteFamily.EDGE] = max(scores.get(CloudSpriteFamily.EDGE, 0.0), 0.48)
+        scores[CloudSpriteFamily.EDGE] = min(scores.get(CloudSpriteFamily.EDGE, 0.0), 0.42)
         scores.pop(CloudSpriteFamily.FRAGMENT, None)
         return
     if metric.exposure >= config.CLOUD_SURFACE_STRONG_EXPOSURE:
