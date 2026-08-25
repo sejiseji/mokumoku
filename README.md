@@ -38,6 +38,8 @@ Cloud Material & Lighting では、背面Lobe全体を強く暗色化するの�
 
 Cloud Sprite Text Pack では、雲スプライトをPNGではなく `0`〜`F` の文字列定義から生成します。9 family × 4 size × 3 variant の108枚を40pxセルの6×6アトラスへ収め、Pyxelの256×256 image bank内で安全に配置します。Variantの重心移動とBBox変化はテストで制限し、素材側からプルプルした見え方を抑えます。配置仕様は `docs/cloud_sprite_atlas_layout.md` にまとめています。
 
+Cloud-Shape Patch v0.2 では、INTERNAL / EDGE / BOTTOM / UPDRAFT / STRETCH を、単一の円やドームではなく、上側に複数の雲房が連なる小さな雲のシルエットへ差し替えています。FRAGMENT / FADE / SERENDIPITY / CHARGE はv0.1定義を維持し、成熟雲のBodyとSurface Lobeだけが小雲らしく読める素材構成にしています。
+
 ## Requirements
 
 - Python 3.11+

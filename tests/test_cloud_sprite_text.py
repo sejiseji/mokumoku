@@ -4,6 +4,7 @@ import unittest
 
 from src.assets.cloud_sprite_text import (
     CLOUD_SPRITE_TEXT,
+    connected_component_count,
     opaque_bbox,
     opaque_centroid,
     opaque_positions,
@@ -14,6 +15,14 @@ from src.assets.sprite_map import (
     CLOUD_SIZE_ORDER,
     CLOUD_SIZE_PIXELS,
     CloudSpriteFamily,
+)
+
+PRIMARY_CLOUD_FAMILIES = (
+    CloudSpriteFamily.INTERNAL,
+    CloudSpriteFamily.EDGE,
+    CloudSpriteFamily.BOTTOM,
+    CloudSpriteFamily.UPDRAFT,
+    CloudSpriteFamily.STRETCH,
 )
 
 
@@ -65,6 +74,62 @@ class CloudSpriteTextTests(unittest.TestCase):
                             )
                         )
                     )
+
+    def test_primary_cloud_variants_are_subtle_but_not_identical(self) -> None:
+        for family in PRIMARY_CLOUD_FAMILIES:
+            for size_class in CLOUD_SIZE_ORDER:
+                variants = CLOUD_SPRITE_TEXT[(family, size_class)]
+                base = variants.variant_0
+
+                for variant in (1, 2):
+                    rows = variants.at(variant)
+                    changed_pixels = sum(
+                        base_char != variant_char
+                        for base_row, variant_row in zip(base, rows, strict=True)
+                        for base_char, variant_char in zip(
+                            base_row,
+                            variant_row,
+                            strict=True,
+                        )
+                    )
+                    self.assertGreaterEqual(changed_pixels, 1)
+                    self.assertLessEqual(changed_pixels, 6)
+
+    def test_primary_cloud_shapes_are_single_connected_masses(self) -> None:
+        for family in PRIMARY_CLOUD_FAMILIES:
+            for size_class in CLOUD_SIZE_ORDER:
+                variants = CLOUD_SPRITE_TEXT[(family, size_class)]
+
+                for variant in range(3):
+                    self.assertEqual(connected_component_count(variants.at(variant)), 1)
+
+    def test_horizontal_cloud_families_are_wider_than_tall(self) -> None:
+        families = (
+            CloudSpriteFamily.INTERNAL,
+            CloudSpriteFamily.EDGE,
+            CloudSpriteFamily.BOTTOM,
+            CloudSpriteFamily.STRETCH,
+        )
+
+        for family in families:
+            for size_class in CLOUD_SIZE_ORDER:
+                left, top, right, bottom = opaque_bbox(
+                    CLOUD_SPRITE_TEXT[(family, size_class)].variant_0
+                )
+                width = right - left + 1
+                height = bottom - top + 1
+                self.assertGreaterEqual(width, height * 1.35)
+
+    def test_updraft_keeps_width_while_growing_upward(self) -> None:
+        for size_class in CLOUD_SIZE_ORDER:
+            left, top, right, bottom = opaque_bbox(
+                CLOUD_SPRITE_TEXT[(CloudSpriteFamily.UPDRAFT, size_class)].variant_0
+            )
+            width = right - left + 1
+            height = bottom - top + 1
+
+            self.assertGreaterEqual(width, height)
+            self.assertLessEqual(width, height * 1.25)
 
     def test_internal_uses_only_transparent_body_and_highlight(self) -> None:
         for size_class in CLOUD_SIZE_ORDER:
