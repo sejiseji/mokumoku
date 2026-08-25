@@ -17,7 +17,7 @@ from src.cloud.reaction import (
     radial_strength,
     reaction_radius_px,
 )
-from src.cloud.simulation import CloudSimulation
+from src.cloud.simulation import CloudSimulation, radial_birth_basis
 from src.enums import EdgeKind
 from src.math3d import Vec3
 from src.rng import RandomSource
@@ -391,6 +391,38 @@ class RadialReactionTests(unittest.TestCase):
         free = simulation.sprout_sector_score(parent, Vec3(-1.0, 0.0, 0.0))
 
         self.assertLess(occupied, free)
+
+    def test_global_shape_score_prefers_underfilled_depth_axis(self) -> None:
+        simulation = CloudSimulation(RandomSource(11227))
+        camera = build_camera_basis(0.0)
+        parent = create_isolated_parent(simulation)
+        basis = radial_birth_basis(camera)
+        horizontal, _world_up, depth_axis = basis
+        for offset in (-24.0, -12.0, 12.0, 24.0):
+            create_node(
+                simulation.state,
+                parent.lineage_id,
+                parent.cluster_id,
+                parent.position + horizontal * offset,
+                simulation.rng,
+            )
+
+        sample = simulation.cluster_shape_sample(parent.lineage_id, basis, parent.id)
+
+        self.assertIsNotNone(sample)
+        depth_score = simulation.cluster_shape_candidate_score(
+            sample,
+            parent.position + depth_axis * 18.0,
+            basis,
+            0.0,
+        )
+        horizontal_score = simulation.cluster_shape_candidate_score(
+            sample,
+            parent.position + horizontal * 18.0,
+            basis,
+            0.0,
+        )
+        self.assertGreater(depth_score, horizontal_score + 0.10)
 
     def test_radial_reaction_plan_is_deterministic(self) -> None:
         first = radial_signature()

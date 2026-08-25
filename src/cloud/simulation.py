@@ -77,6 +77,18 @@ class SeedEcologyResult:
     threshold: float
 
 
+@dataclass(frozen=True)
+class ClusterShapeSample:
+    centroid: Vec3
+    min_height: float
+    max_height: float
+    max_planar_radius: float
+    sector_counts: tuple[int, int, int, int]
+    horizontal_axis_count: int
+    depth_axis_count: int
+    node_count: int
+
+
 class CloudSimulation:
     def __init__(self, rng: RandomSource) -> None:
         self.rng = rng
@@ -621,9 +633,10 @@ class CloudSimulation:
         lineage_id: int,
         primary_node_id: int | None = None,
     ) -> list[tuple[float, float, Vec3, float, float]]:
-        del origin_world, lineage_id
+        del origin_world
         candidates: list[tuple[float, float, float, float, Vec3, float]] = []
         birth_basis = radial_birth_basis(camera)
+        shape_sample = self.cluster_shape_sample(lineage_id, birth_basis, primary_node_id)
         stack_t = self.radial_stack_factor(primary_node_id, camera)
         horizontal_radius = radial_birth_horizontal_radius(radius_px)
         if stack_t > 0.0:
@@ -731,6 +744,15 @@ class CloudSimulation:
                 camera,
                 plane_depth,
             )
+            if index > 0:
+                score += config.RADIAL_GLOBAL_SHAPE_SCORE_WEIGHT * (
+                    self.cluster_shape_candidate_score(
+                        shape_sample,
+                        position,
+                        birth_basis,
+                        stack_t,
+                    )
+                )
             if stack_t > 0.0 and primary_node_id is not None:
                 source = self.state.nodes.get(primary_node_id)
                 if source is not None:
@@ -758,6 +780,7 @@ class CloudSimulation:
                     score += config.RADIAL_STACK_DOWN_SCORE_PENALTY * stack_t * vertical_delta
             if index == 0:
                 score += 0.35
+            score = clamp01(score)
             candidates.append((score, normalized, candidate_x, candidate_y, position, distance))
         candidates.sort(
             key=lambda item: (
@@ -828,6 +851,113 @@ class CloudSimulation:
         if edge_margin < 16:
             score -= 0.22
         return clamp01(score)
+
+    def cluster_shape_sample(
+        self,
+        lineage_id: int,
+        basis: tuple[Vec3, Vec3, Vec3],
+        primary_node_id: int | None = None,
+    ) -> ClusterShapeSample | None:
+        primary = self.state.nodes.get(primary_node_id) if primary_node_id is not None else None
+        nodes = [
+            node
+            for node in self.state.live_nodes()
+            if node.lineage_id == lineage_id
+            and not node.is_pruning
+            and node.fade > 0.0
+            and (primary is None or node.cluster_id == primary.cluster_id)
+        ]
+        if len(nodes) < config.CLUSTER_SHAPE_MIN_NODES:
+            return None
+
+        centroid = Vec3(
+            sum(node.position.x for node in nodes) / len(nodes),
+            sum(node.position.y for node in nodes) / len(nodes),
+            sum(node.position.z for node in nodes) / len(nodes),
+        )
+        horizontal, world_up, depth_axis = basis
+        heights: list[float] = []
+        sector_counts = [0, 0, 0, 0]
+        horizontal_axis_count = 0
+        depth_axis_count = 0
+        max_planar_radius = 1.0
+        for node in nodes:
+            offset = node.position - centroid
+            height = offset.dot(world_up)
+            horizontal_offset = offset.dot(horizontal)
+            depth_offset = offset.dot(depth_axis)
+            planar_radius = math.hypot(horizontal_offset, depth_offset)
+            heights.append(height)
+            max_planar_radius = max(max_planar_radius, planar_radius)
+            if planar_radius <= 0.01:
+                continue
+            sector_counts[cluster_shape_sector_index(horizontal_offset, depth_offset)] += 1
+            if abs(horizontal_offset) >= abs(depth_offset):
+                horizontal_axis_count += 1
+            else:
+                depth_axis_count += 1
+
+        return ClusterShapeSample(
+            centroid=centroid,
+            min_height=min(heights),
+            max_height=max(heights),
+            max_planar_radius=max_planar_radius,
+            sector_counts=tuple(sector_counts),
+            horizontal_axis_count=horizontal_axis_count,
+            depth_axis_count=depth_axis_count,
+            node_count=len(nodes),
+        )
+
+    def cluster_shape_candidate_score(
+        self,
+        sample: ClusterShapeSample | None,
+        position: Vec3,
+        basis: tuple[Vec3, Vec3, Vec3],
+        stack_t: float,
+    ) -> float:
+        if sample is None:
+            return 0.0
+        horizontal, world_up, depth_axis = basis
+        offset = position - sample.centroid
+        horizontal_offset = offset.dot(horizontal)
+        depth_offset = offset.dot(depth_axis)
+        planar_radius = math.hypot(horizontal_offset, depth_offset)
+        height_span = max(1.0, sample.max_height - sample.min_height)
+        height_t = clamp01((offset.dot(world_up) - sample.min_height) / height_span)
+        radius_t = clamp01(
+            planar_radius
+            / max(
+                config.SECONDARY_SPROUT_BASE_OFFSET * 2.0,
+                sample.max_planar_radius + config.MIN_NODE_RADIUS,
+            )
+        )
+
+        sector_index = cluster_shape_sector_index(horizontal_offset, depth_offset)
+        sector_average = sum(sample.sector_counts) / 4.0
+        sector_need = clamp01(
+            (sector_average + 1.0 - sample.sector_counts[sector_index])
+            / max(1.0, sector_average + 1.0)
+        )
+
+        if abs(horizontal_offset) >= abs(depth_offset):
+            axis_count = sample.horizontal_axis_count
+            opposite_axis_count = sample.depth_axis_count
+        else:
+            axis_count = sample.depth_axis_count
+            opposite_axis_count = sample.horizontal_axis_count
+        axis_need = clamp01(
+            (opposite_axis_count + 1.0 - axis_count) / max(1.0, opposite_axis_count + 1.0)
+        )
+
+        target_width = cluster_shape_target_width(height_t, stack_t)
+        profile_fit = clamp01(1.0 - abs(radius_t - target_width) / 0.62)
+        upper_stack_fit = clamp01(height_t * (1.0 - max(0.0, radius_t - 0.70) * 1.8))
+        return clamp01(
+            0.40 * sector_need
+            + 0.24 * axis_need
+            + 0.24 * profile_fit
+            + 0.12 * upper_stack_fit
+        )
 
     def near_projected_node(
         self,
@@ -1903,6 +2033,8 @@ class CloudSimulation:
             yaw_degrees=0.0,
             pitch_degrees=0.0,
         )
+        shape_basis = radial_birth_basis(view_camera)
+        shape_sample = self.cluster_shape_sample(parent.lineage_id, shape_basis, parent.id)
         parent_projection = project_point(parent.position, view_camera)
         input_dx = stimulus.screen_x - parent_projection.screen_x
         input_dy = stimulus.screen_y - parent_projection.screen_y
@@ -1939,6 +2071,8 @@ class CloudSimulation:
                 up_weight,
                 outward,
                 candidate_direction,
+                shape_sample,
+                shape_basis,
             )
             if projection.visible:
                 if input_length > 4.0 and parent_projection.visible:
@@ -1975,6 +2109,8 @@ class CloudSimulation:
         up_weight: float,
         outward: Vec3,
         candidate_direction: Vec3,
+        shape_sample: ClusterShapeSample | None = None,
+        shape_basis: tuple[Vec3, Vec3, Vec3] | None = None,
     ) -> float:
         score = 0.50
         polarity_match = parent.polarity.dot(candidate_direction)
@@ -2012,6 +2148,15 @@ class CloudSimulation:
         score += config.SPROUT_NEAR_ACTIVATION_SCORE_WEIGHT * activation_signal
         score -= config.SPROUT_MID_INHIBITION_SCORE_WEIGHT * inhibition_signal
         score += self.sprout_sector_score(parent, candidate_direction)
+        if shape_basis is not None:
+            score += config.SPROUT_GLOBAL_SHAPE_SCORE_WEIGHT * (
+                self.cluster_shape_candidate_score(
+                    shape_sample,
+                    position,
+                    shape_basis,
+                    0.0,
+                )
+            )
         nearest = self.nearest_node_distance(position, exclude_node_id=parent.id)
         if nearest is not None:
             if nearest < config.MIN_NODE_RADIUS * 0.75:
@@ -2466,6 +2611,20 @@ def radial_birth_horizontal_radius(radius_px: float) -> float:
 def radial_birth_depth_factor(index: int) -> float:
     sequence = (0.0, 0.82, -0.82, 0.45, -0.45, 0.68, -0.68, 0.24, -0.24)
     return sequence[index % len(sequence)]
+
+
+def cluster_shape_sector_index(horizontal_offset: float, depth_offset: float) -> int:
+    if abs(horizontal_offset) >= abs(depth_offset):
+        return 0 if horizontal_offset >= 0.0 else 1
+    return 2 if depth_offset >= 0.0 else 3
+
+
+def cluster_shape_target_width(height_t: float, stack_t: float) -> float:
+    base_target = 0.74 - 0.34 * clamp01(height_t)
+    if 0.28 <= height_t <= 0.64:
+        base_target += 0.07
+    stacked_target = max(0.26, base_target * 0.74)
+    return lerp_config(base_target, stacked_target, stack_t)
 
 
 def lift_radial_candidate_into_ellipsoid(

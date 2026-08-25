@@ -42,6 +42,8 @@ Cloud-Shape Patch v0.2 では、INTERNAL / EDGE / BOTTOM / UPDRAFT / STRETCH を
 
 Cloud-Shape Patch v0.3 では、INTERNALを単体の雲アイコンではなく横長の白いBody Fillパッチへ再設計しています。密なクラスタではINTERNALのSurface Lobeを原則抑制し、EDGE / BOTTOM / UPDRAFTだけが外周の雲房として出やすいよう、露出判定とNon-Maximum Suppressionも強めています。Depth Shadingは背面Lobe全体の色置換をやめ、雲底や接触境界の短い影だけへ絞っています。
 
+Global Shape Completion では、Radial SeedとSecondary Sproutの候補評価時に、現在クラスタの高さ帯、水平・奥行き軸、前後左右sectorの不足度を読んで加点します。タップ位置や既存の3D Birth Volumeを崩さず、水平に偏った雲は奥行きへ、薄い側がある雲は未充填sectorへ、上端反応は少し細いStacked Volumeへ伸びやすくしています。
+
 ## Requirements
 
 - Python 3.11+
